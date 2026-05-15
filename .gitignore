@@ -54,3 +54,6 @@ htmlcov/
 
 # Build outputs
 docker-build/
+
+# Agent PR audit scratch (local ledgers / API dumps)
+.pr-audit-tmp/

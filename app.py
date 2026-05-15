@@ -1258,22 +1258,20 @@ _ADVERTISED_PREFIXES: tuple[str, ...] = _parsed_advertised_prefixes()
 # Tools-incapable upstreams still serve the safety-classifier path (it does
 # not need tools to return safe/risky), so stripping rather than blacklisting
 # the deployment keeps the Haiku-slot picker mapping useful.
-_PREFIX_INCAPABLE: dict[str, frozenset[str]] = {
-    "deepseek.": frozenset({"tools", "tool_choice", "stop_sequences", "stop"}),
-    "google.": frozenset({"tools", "tool_choice", "stop_sequences", "stop"}),
-    # Qwen / Kimi / MiniMax on Bedrock support native tool_use (these are the
-    # OSS bake-off winners precisely because of that), but their Converse API
-    # rejects the ``stopSequences`` field that Claude Code unconditionally
-    # sends on every auto-mode classifier request. Without stripping, the
-    # classifier 400s every Bash/Skill safety check and fails closed — which
-    # the Claude Code UI surfaces as the misleading "<model> is temporarily
-    # unavailable" message. Strip only stop_sequences/stop so native tools
-    # still flow. Empirically reproduced 2026-05-15 against
-    # qwen.qwen3-coder-480b-a35b-v1:0 on DIAL/Bedrock.
-    "qwen.": frozenset({"stop_sequences", "stop"}),
-    "moonshotai.": frozenset({"stop_sequences", "stop"}),
-    "minimax.": frozenset({"stop_sequences", "stop"}),
-}
+#
+# Registry: (deployment-id prefix, Anthropic/OpenAI body fields to strip before
+# upstream). Long-form investigation (classifier 400s, decoupling limits) lives
+# in ``docs/findings/2026-05-15-classifier-stopSequences-and-model-decoupling.md``.
+_UPSTREAM_PREFIX_STRIP_REGISTRY: tuple[tuple[str, frozenset[str]], ...] = (
+    ("deepseek.", frozenset({"tools", "tool_choice", "stop_sequences", "stop"})),
+    ("google.", frozenset({"tools", "tool_choice", "stop_sequences", "stop"})),
+    # Qwen / Kimi / MiniMax: native tool_use, but Bedrock Converse rejects
+    # ``stopSequences`` on classifier traffic; strip only stop fields (see findings doc).
+    ("qwen.", frozenset({"stop_sequences", "stop"})),
+    ("moonshotai.", frozenset({"stop_sequences", "stop"})),
+    ("minimax.", frozenset({"stop_sequences", "stop"})),
+)
+_PREFIX_INCAPABLE: dict[str, frozenset[str]] = dict(_UPSTREAM_PREFIX_STRIP_REGISTRY)
 
 
 def _strip_unsupported_features_for_upstream(
@@ -1501,6 +1499,11 @@ def _humanize_model_id(model_id: str) -> str:
     short = re.sub(r"-v\d+:\d+$", "", short)
     short = short.removeprefix("claude-").replace("-v", " v").replace("-", " ")
     pretty = " ".join(p.capitalize() if p[:1].isalpha() else p for p in short.split())
+    # Drop a leading token that repeats the family label (e.g. ``moonshotai.kimi-k2.5``
+    # → avoid ``Kimi Kimi K2.5``; ``minimax.minimax-m2.5`` → avoid ``MiniMax Minimax …``).
+    toks = pretty.split()
+    if toks and toks[0].lower() == family.lower():
+        pretty = " ".join(toks[1:])
     suffix = " (with thinking)" if base.endswith("-with-thinking") else ""
     return f"{family} {pretty}{suffix} (DIAL)"
 
@@ -1512,7 +1515,7 @@ def _owned_by_for_model_id(mid: str) -> str:
     if mid.startswith("qwen."):
         return "qwen-via-dial"
     if mid.startswith("moonshotai."):
-        return "moonshot-via-dial"
+        return "moonshotai-via-dial"
     if mid.startswith("minimax."):
         return "minimax-via-dial"
     if mid.startswith("mistral."):
