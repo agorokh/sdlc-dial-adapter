@@ -1219,6 +1219,18 @@ _ADVERTISED_PREFIXES: tuple[str, ...] = _parsed_advertised_prefixes()
 _PREFIX_INCAPABLE: dict[str, frozenset[str]] = {
     "deepseek.": frozenset({"tools", "tool_choice", "stop_sequences", "stop"}),
     "google.": frozenset({"tools", "tool_choice", "stop_sequences", "stop"}),
+    # Qwen / Kimi / MiniMax on Bedrock support native tool_use (these are the
+    # OSS bake-off winners precisely because of that), but their Converse API
+    # rejects the ``stopSequences`` field that Claude Code unconditionally
+    # sends on every auto-mode classifier request. Without stripping, the
+    # classifier 400s every Bash/Skill safety check and fails closed — which
+    # the Claude Code UI surfaces as the misleading "<model> is temporarily
+    # unavailable" message. Strip only stop_sequences/stop so native tools
+    # still flow. Empirically reproduced 2026-05-15 against
+    # qwen.qwen3-coder-480b-a35b-v1:0 on DIAL/Bedrock.
+    "qwen.": frozenset({"stop_sequences", "stop"}),
+    "moonshotai.": frozenset({"stop_sequences", "stop"}),
+    "minimax.": frozenset({"stop_sequences", "stop"}),
 }
 
 
