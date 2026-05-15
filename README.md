@@ -70,6 +70,24 @@ DIAL keys for EPAM colleagues come through the standard enterprise
 subscription. For external users, point `UPSTREAM_BASE` at any OpenAI
 chat-completions endpoint you have credentials for.
 
+## Configuration reference
+
+All configuration is via environment variables. Defaults work for a
+single-user loopback deployment against EPAM DIAL.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PROJECT_KEY` | _(unset; required)_ | Upstream API key. Sent as `Api-Key:` on every forwarded request. |
+| `UPSTREAM_BASE` | `https://ai-proxy.lab.epam.com` | Base URL of the OpenAI-compatible gateway. |
+| `DIAL_API_VERSION` | `2024-02-01` | Appended as `?api-version=` query string on each upstream call. |
+| `BIND` | `127.0.0.1` | Listen address. Set to `0.0.0.0` inside Docker so the host port-forward reaches the listener. Do not bind to a routable interface without a reverse proxy in front. |
+| `LISTEN_PORT` | `8092` | TCP port. |
+| `ANTHROPIC_DIAL_ADAPTER_LOG` | `/var/log/anthropic-dial-adapter/adapter.log` | Path for the structured JSON log. Falls back to stderr if the directory is unwritable. |
+| `ANTHROPIC_DIAL_PRICE_TABLE_JSON` | _(empty)_ | Optional operator price table. When set, each `response_out` event carries a `cost_usd_estimate` field. |
+| `ANTHROPIC_DIAL_ALIASES_JSON` | _(empty)_ | Optional model alias map. Rewrites the `model` field in requests to a different upstream deployment id. |
+| `ANTHROPIC_DIAL_SHADOW_MODEL` | _(empty)_ | Optional shadow-dispatch target. When set, every primary response triggers a second upstream call for comparison; the shadow response is written to a separate log and never returned to the client. Doubles upstream load and cost. |
+| `ANTHROPIC_DIAL_CACHE_PROBE_MODEL` | _(auto)_ | Override for the model used at startup to detect cache_control support upstream. |
+
 ## What this isn't
 
 - Not a proxy. There is no `api.anthropic.com` fallback. Setting
@@ -78,8 +96,10 @@ chat-completions endpoint you have credentials for.
 - Not a billing system. The optional `cost_usd_estimate` field is
   computed from a configurable price table; treat it as a sanity-check
   number, not an invoice.
-- Not a multi-tenant gateway. One process per project key. Run multiple
-  instances behind a reverse proxy if you need tenant isolation.
+- Not a multi-tenant gateway. One process per project key. The
+  adapter substitutes its own `PROJECT_KEY` upstream and does not
+  validate any caller-supplied auth header. Bind to loopback only or
+  put a reverse proxy with auth in front before exposing it.
 
 ## Status
 

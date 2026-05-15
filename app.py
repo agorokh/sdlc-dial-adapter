@@ -77,10 +77,10 @@ SHADOW_LOG_PATH = os.environ.get(
 # model field is rewritten back to the client-requested name so the calling
 # tool (Claude Code) sees what it asked for.
 #
-# ``ANTHROPIC_DIAL_ALIASES_QWEN_JSON`` is a compose-friendly sibling: when the
-# primary JSON env is unset/blank, the adapter reads the Qwen-specific var so
-# operators can override the :8093 disguise map without fragile
-# ``${VAR:-{...}}`` interpolation in docker-compose.yml.
+# ``ANTHROPIC_DIAL_ALIASES_QWEN_JSON`` is an optional secondary alias var
+# read when the primary env above is unset or blank. Useful in deployments
+# where a primary alias map is shared and a secondary instance overrides a
+# subset (e.g. routing a single picker slot to a different upstream).
 def _load_aliases_map() -> dict[str, str]:
     raw = os.environ.get("ANTHROPIC_DIAL_ALIASES_JSON", "").strip()
     if not raw:
@@ -134,7 +134,8 @@ _ALIASES_MAP: dict[str, str] = {}  # populated at startup via _load_aliases_map(
 # Operator-configurable Bedrock list-price table (USD per 1M tokens).
 _PRICE_TABLE: dict[str, dict[str, float]] = {}
 
-# `logger` writes GFLog-shape JSON for the Vector tail (per repo telemetry pipe).
+# `logger` writes structured newline-delimited JSON suitable for any line-oriented
+# log shipper (Vector, Fluent Bit, Promtail, etc.).
 # stderr also receives a short human line for `docker logs`.
 logger = logging.getLogger("anthropic_dial_adapter")
 logger.setLevel(logging.INFO)
@@ -396,10 +397,10 @@ def _canonical_sha(obj: Any) -> str:
     ).hexdigest()[:16]  # 64-bit prefix is plenty for drift detection
 
 
-# Claude Code MCP-server convention (verified in `.mcp.json` of this repo):
-# server-injected tools are prefixed `mcp__<server>__<tool>`. Native tools
-# (Bash, Read, Write, Edit, …) are bare CapitalCase names. Anything else is
-# either a user-defined plugin tool or — rarely — a custom subagent.
+# Claude Code MCP-server convention: server-injected tools are prefixed
+# `mcp__<server>__<tool>`. Native tools (Bash, Read, Write, Edit, …) are
+# bare CapitalCase names. Anything else is either a user-defined plugin
+# tool or, rarely, a custom subagent.
 _NATIVE_TOOLS = {
     "Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep",
     "Task", "TodoWrite", "WebFetch", "WebSearch", "NotebookEdit",
@@ -1136,13 +1137,13 @@ async def count_tokens_stub(_r: web.Request) -> web.Response:
 # unreachable (off-VPN, 5xx, etc.) so the adapter still passes the Desktop
 # connection probe.
 #
-# These strings are **OpenAI deployment ids** from ai-proxy's
-# ``GET /openai/models`` (``anthropic.*``, ``qwen.*``, …). They are not the same
-# namespace as ``config/dial-core/aidial.config.json`` ``models`` object keys
-# (which are DIAL-side ids such as ``claude-sonnet-4-5`` and may alias to
-# entirely different upstreams). Keeping a small offline pilot list here is
-# intentional; the live path still prefers the upstream inventory when Core is
-# reachable (see ``models()``).
+# These strings are **OpenAI deployment ids** from the gateway's
+# ``GET /openai/models`` listing (``anthropic.*``, ``qwen.*``, …). They are
+# not the same namespace as DIAL Core's internal ``models`` config object
+# (DIAL-side ids like ``claude-sonnet-4-5`` may alias to entirely different
+# upstream deployments). Keeping a small offline pilot list here is
+# intentional; the live path still prefers the upstream inventory when the
+# gateway is reachable (see ``models()``).
 MODELS_TTL_SEC = 300
 _MODELS_FALLBACK = [
     "anthropic.claude-opus-4-7",
@@ -1200,9 +1201,11 @@ _ADVERTISED_PREFIXES: tuple[str, ...] = _parsed_advertised_prefixes()
 # can quantify the gap, and lets the request through with degraded
 # functionality rather than a hard 422/400.
 #
-# Source of truth: live DIAL probes captured in
-
-#   - deepseek.v3.2        → "Tools are not supported" (HTTP 422)
+# Observed upstream behaviour by deployment family (from live probes against
+# the gateway). The strings below are upstream-error literals the adapter
+# pattern-matches when deciding to strip a feature:
+#
+#   - deepseek.v3.2        -> "Tools are not supported" (HTTP 422)
 #                          → "doesn't support the stopSequences field" (HTTP 400)
 #   - google.gemma-3-*-it  → "doesn't support the stopSequences field" (HTTP 400);
 #                            tools pass at the gateway but Gemma 3 ignores
