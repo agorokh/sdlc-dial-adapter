@@ -35,12 +35,13 @@ docker build -t sdlc-dial-adapter:local .
 docker run --rm -d --name sdlc-dial-adapter \
   -e PROJECT_KEY="$YOUR_DIAL_API_KEY" \
   -e UPSTREAM_BASE="https://ai-proxy.lab.epam.com" \
+  -e BIND=0.0.0.0 \
   -p 127.0.0.1:8092:8092 \
   sdlc-dial-adapter:local
 
 # Smoke check
 curl -sS http://127.0.0.1:8092/health
-# → ok
+# -> ok
 ```
 
 Point Claude Code at it:

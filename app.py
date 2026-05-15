@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
-"""Anthropic Messages API ↔ EPAM AI DIAL (Azure-OpenAI shape) translator.
+"""Anthropic Messages API to OpenAI chat-completions translator.
 
-Mirrors the openrouter-adapter / aiproxy-adapter aiohttp pattern. Accepts
-Anthropic-shape POST /v1/messages requests from clients (e.g. Claude Code
-CLI) and translates them to DIAL's Azure-OpenAI deployment path:
+Accepts Anthropic-shape POST /v1/messages requests from clients (e.g.
+Claude Code CLI) and forwards them to an OpenAI-compatible gateway at:
 
     POST {UPSTREAM_BASE}/openai/deployments/{model}/chat/completions
          ?api-version={DIAL_API_VERSION}
 
+The default target is EPAM AI DIAL (https://ai-proxy.lab.epam.com), but
+any OpenAI chat-completions endpoint will work given a compatible
+UPSTREAM_BASE and PROJECT_KEY.
+
 Authentication: clients send any of {x-api-key, Authorization: Bearer ...};
-the adapter swaps in `Api-Key: $PROJECT_KEY` (read from env at start-up,
-typically injected via `doppler run --`). No keys land on disk.
+the adapter substitutes `Api-Key: $PROJECT_KEY` read from the environment
+at start-up. No credentials are persisted to disk.
 
 Translation covers:
-  - top-level `system` (string or content blocks) → leading OpenAI system msg
-  - text / image / tool_use / tool_result content blocks
-  - tools[] (name/description/input_schema) ↔ OpenAI tools (function)
-  - tool_choice mapping (auto/any/tool/none)
-  - cache_control (passthrough first; drop+metric on upstream 400)
-  - non-streaming response → Anthropic Messages response shape
-  - SSE event taxonomy: chat.completion.chunk → message_start →
-    content_block_start/delta/stop → message_delta → message_stop
-  - stable 1:1 tool_use_id mapping (upstream Bedrock returns
-    `toolu_bdrk_...` style ids, preserved verbatim)
-
-Issue: agorokh/dial-sandbox#68. See the paired ADR at
-docs/01_Vault/DialSandbox/01_Decisions/2026-05-10_claude-code-anthropic-dial-adapter.md
-and investigation 06_Investigations/2026-05-10-claude-code-dial-bringup.md.
+  - top-level `system` (string or content blocks) -> leading OpenAI system msg
+  - text / image / tool_use / tool_result content blocks in both directions
+  - tools[] (name/description/input_schema) <-> OpenAI tools (function)
+  - tool_choice mapping (auto / any / tool / none)
+  - cache_control (passthrough on Anthropic upstreams; stripped on others)
+  - non-streaming JSON responses repackaged as Anthropic Messages responses
+  - SSE event sequence: chat.completion.chunk -> message_start ->
+    content_block_start / delta / stop -> message_delta -> message_stop
+  - stable 1:1 tool_use_id mapping (Bedrock-style `toolu_bdrk_...` ids
+    are preserved verbatim across the translation boundary)
 """
 from __future__ import annotations
 
@@ -56,18 +55,18 @@ LOG_PATH = os.environ.get(
     "ANTHROPIC_DIAL_ADAPTER_LOG",
     "/var/log/anthropic-dial-adapter/adapter.log",
 )
-# Part J — shadow-mode dual-dispatch. When set, every primary response is
+# Shadow-mode dual-dispatch. When set, every primary response is
 # mirrored to a second upstream deployment (typically an OSS Coder model
 # like `qwen.qwen3-coder-480b-a35b-v1:0`) and the structural diff is logged
 # to SHADOW_LOG_PATH. Fire-and-forget — does NOT block the client. Prep
-# evidence for #71 (Q2 Phase 2 live-alias + adapter-as-linter).
+# accumulating signal from real Claude Code sessions hitting the adapter.
 SHADOW_MODEL = os.environ.get("ANTHROPIC_DIAL_SHADOW_MODEL", "").strip()
 SHADOW_LOG_PATH = os.environ.get(
     "ANTHROPIC_DIAL_SHADOW_LOG",
     "/var/log/anthropic-dial-adapter/shadow.log",
 )
 
-# Issue #71 Part A — live alias mechanism.
+# Live alias mechanism.
 # JSON object mapping client-requested model id -> target DIAL deployment id.
 # Example:
 #   ANTHROPIC_DIAL_ALIASES_JSON='{"claude-sonnet-4-6":"qwen.qwen3-coder-480b-a35b-v1:0"}'
@@ -132,7 +131,7 @@ def _load_aliases_map() -> dict[str, str]:
 
 
 _ALIASES_MAP: dict[str, str] = {}  # populated at startup via _load_aliases_map()
-# Issue #81 — operator Bedrock list-price table (USD per 1M tokens).
+# Operator-configurable Bedrock list-price table (USD per 1M tokens).
 _PRICE_TABLE: dict[str, dict[str, float]] = {}
 
 # `logger` writes GFLog-shape JSON for the Vector tail (per repo telemetry pipe).
@@ -187,7 +186,7 @@ def _gflog_target_model_family(model_id: str | None) -> str:
 
 
 def _gflog_metrics_tags(request: web.Request, upstream_model_id: str | None) -> dict[str, str]:
-    """Stable dimensions for Issue #79 Influx ``adapter_metrics`` exporter."""
+    """Stable tag dimensions for the Influx ``adapter_metrics`` exporter."""
     return {
         "client_name": _gflog_client_name(request),
         "target_model_family": _gflog_target_model_family(upstream_model_id),
@@ -218,7 +217,7 @@ def _cost_usd_estimate_kwargs(
     return {"cost_usd_estimate": est}
 
 
-# Part J — shadow-mode log writer (separate file so Vector can tail
+# Shadow-mode log writer (separate file so a log shipper can tail
 # /var/log/anthropic-dial-adapter/*.log and route by source if desired).
 _shadow_logger = logging.getLogger("anthropic_dial_adapter_shadow")
 _shadow_logger.setLevel(logging.INFO)
@@ -262,12 +261,12 @@ STOP_REASON_MAP = {
 }
 
 # ---------------------------------------------------------------------------
-# Upstream cache_control support state (Part F)
+# Upstream cache_control support state.
 # ---------------------------------------------------------------------------
 # Anthropic Claude Code sends `cache_control: {"type":"ephemeral"}` markers on
 # system blocks, the trailing user turn, and tool definitions. The Bedrock-
 # Anthropic upstream supports caching via its native `cachePoint` shape, but
-# DIAL's `ai-proxy.lab.epam.com` aiproxy adapter (verified 2026-05-11) has a
+# DIAL's `ai-proxy.lab.epam.com` aiproxy adapter has a
 # strict request validator that REJECTS every known cache_control shape with
 # HTTP 400 "Extra inputs are not permitted" — inline content-block field,
 # `custom_fields.cache_breakpoint`, and top-level message field all fail.
@@ -300,7 +299,7 @@ def _cache_control_strategy() -> str:
 async def _probe_upstream_cache_control_support(
     session: aiohttp.ClientSession,
 ) -> str:
-    """One-shot startup probe — corrected 2026-05-11 evening after fetching
+    """One-shot startup probe.
     https://docs.dialx.ai/tutorials/developers/prompt-caching:
 
     DIAL expects `custom_fields.cache_breakpoint: {}` (empty marker, or with
@@ -381,7 +380,7 @@ def _validate_upstream_model_id(model: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tool-schema hash (Part G) and MCP classification (Part H)
+# Tool-schema hash and MCP classification.
 # ---------------------------------------------------------------------------
 
 
@@ -501,7 +500,7 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     strat = _cache_control_strategy()
     # When the upstream accepts DIAL-shape breakpoints, switch from "stripped"
     # reporting to "translated_dial_breakpoint" — this is the actual
-    # operational mode after the 2026-05-11 docs-grounded fix.
+    # operational mode.
     if strat == "passthrough":
         strat = "translated_dial_breakpoint"
 
@@ -511,8 +510,8 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     # its system prompt and tool inventory, so every real Claude Code request
     # fails 502 against those upstreams. Drop translation for non-Anthropic
     # targets and report it via a distinct strategy tag so the AI-SDLC
-    # dashboard surfaces the operational gap. See #71 follow-up
-    # (2026-05-13 ad-hoc Qwen 502 investigation).
+    # dashboard surfaces the operational gap when this happens.
+    
     target_model = str(body.get("model", "") or "")
     target_is_anthropic = target_model.startswith(("anthropic.", "global.anthropic."))
     if not target_is_anthropic and target_model:
@@ -665,7 +664,7 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
 
     out["messages"] = messages
 
-    # 3. tools[] → OpenAI tools (function) + Part G hash drift + Part H classification
+    # 3. tools[] -> OpenAI tools (function), plus schema-drift detection and MCP classification
     tools_in = body.get("tools") or []
     tool_inventory: list[dict[str, Any]] = []
     if tools_in:
@@ -760,7 +759,7 @@ def openai_to_anthropic_response(
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Build an Anthropic Messages response from a non-streaming OpenAI body.
     Returns (anthropic_body, tool_calls_by_name) — the second tuple element
-    powers the dashboard's per-tool success-rate panel (Part H).
+    powers the dashboard's per-tool success-rate panel.
     """
     choice = (upstream.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
@@ -867,7 +866,7 @@ async def stream_openai_to_anthropic(
     # across deltas.
     tool_block_index_by_oai_index: dict[int, int] = {}
     open_tool_oai_indices: set[int] = set()
-    tool_calls_by_name: dict[str, int] = {}  # Part H: streaming-path per-tool counter
+    tool_calls_by_name: dict[str, int] = {}  # streaming-path per-tool counter
     tool_stopped_oai_indices: set[int] = set()
     next_block_index = 0
     accumulated_usage: dict[str, int] = {}
@@ -915,7 +914,7 @@ async def stream_openai_to_anthropic(
                 prompt0 = int(u0.get("prompt_tokens") or 0)
                 real_in = max(0, prompt0 - cached0)
             input_hint = max(estimated_input_tokens, real_in)
-            # When the caller forces an override (alias mode, #71 Part A),
+            # When the caller forces an override (alias mode),
             # use it regardless of what the upstream stream reports as `model`.
             # Otherwise prefer upstream's value, falling back to requested.
             start_model = (
@@ -1100,7 +1099,7 @@ async def stream_openai_to_anthropic(
     trace["output_tokens"] = int(msg_delta_usage.get("output_tokens") or 0)
     trace["cache_read_input_tokens"] = int(msg_delta_usage.get("cache_read_input_tokens") or 0)
     trace["cache_creation_input_tokens"] = int(msg_delta_usage.get("cache_creation_input_tokens") or 0)
-    trace["tool_calls_by_name"] = tool_calls_by_name  # Part H streaming-path
+    trace["tool_calls_by_name"] = tool_calls_by_name  # streaming-path counter
 
 
 # ---------------------------------------------------------------------------
@@ -1119,7 +1118,7 @@ async def count_tokens_stub(_r: web.Request) -> web.Response:
             "type": "error",
             "error": {
                 "type": "not_implemented",
-                "message": "count_tokens is not supported by the adapter; see PR #68",
+                "message": "count_tokens is not supported by the adapter.",
             },
         }).encode(),
         content_type="application/json",
@@ -1152,7 +1151,7 @@ _MODELS_FALLBACK = [
     "anthropic.claude-sonnet-4-6",
     "anthropic.claude-sonnet-4-5-20250929-v1:0",
     "anthropic.claude-haiku-4-5-20251001-v1:0",
-    # Issue #71 follow-up — surface non-Anthropic DIAL deployments in the
+    # Surface non-Anthropic DIAL deployments in the
     # Claude Code `/model` picker so the operator can swap models without
     # spinning up a sibling adapter per provider. Pilot list — may be
     # trimmed once we learn which deployments survive the OpenAI-shape
@@ -1161,7 +1160,7 @@ _MODELS_FALLBACK = [
     "qwen.qwen3-235b-a22b-2507-v1:0",
     "mistral.devstral-2-123b",
     "deepseek.v3.2",
-    # Google Gemma 3 instruction-tuned. DIAL deployments confirmed 2026-05-13.
+    # Google Gemma 3 instruction-tuned.
     # 27B is the most capable; 12B exposed for low-latency pilots. PT
     # (pretrained / base) variants are not advertised — Claude Code's
     # instruction-following surface requires IT.
@@ -1169,7 +1168,7 @@ _MODELS_FALLBACK = [
     "google.gemma-3-12b-it",
 ]
 
-# Issue #71 follow-up — which deployment-id namespaces /v1/models advertises
+# Which deployment-id namespaces /v1/models advertises
 # back to the Anthropic client. Comma-separated env override lets operators
 # narrow (anthropic-only for a paranoid demo) or widen without a rebuild.
 _DEFAULT_ADVERTISED_PREFIXES: tuple[str, ...] = (
@@ -1202,7 +1201,7 @@ _ADVERTISED_PREFIXES: tuple[str, ...] = _parsed_advertised_prefixes()
 # functionality rather than a hard 422/400.
 #
 # Source of truth: live DIAL probes captured in
-# 06_Investigations/2026-05-13-non-anthropic-upstream-capabilities.md.
+
 #   - deepseek.v3.2        → "Tools are not supported" (HTTP 422)
 #                          → "doesn't support the stopSequences field" (HTTP 400)
 #   - google.gemma-3-*-it  → "doesn't support the stopSequences field" (HTTP 400);
@@ -1411,7 +1410,7 @@ def _select_alias_mapping(
 
 
 # Display-name prefix → human family label. Drives the `/model` picker copy
-# for the non-Anthropic deployments we advertise (Issue #71 follow-up).
+# for the non-Anthropic deployments we advertise.
 _PROVIDER_LABELS: dict[str, str] = {
     "anthropic.": "Claude",
     "qwen.": "Qwen",
@@ -1494,7 +1493,7 @@ def _anthropic_models_envelope(ids: list[str]) -> dict:
             "created": 1735689600,  # 2025-01-01T00:00:00Z epoch — OpenAI shape
             "owned_by": _owned_by_for_model_id(mid),
         }
-        # Issue #71 Part A — honest routing in the picker. Match the same
+        # Honest routing in the picker. Match the same
         # short-key / namespaced-key logic as messages() so ANTHROPIC_DIAL_ALIASES_JSON
         # entries keyed by bare Claude Code ids still surface the "(→ target)" suffix.
         alias_match = _select_alias_mapping(
@@ -1592,10 +1591,10 @@ async def models(request: web.Request) -> web.Response:
 async def on_startup(app: web.Application) -> None:
     global _UPSTREAM_CACHE_CONTROL_SUPPORT, _ALIASES_MAP, _PRICE_TABLE
     _setup_logging()
-    _setup_shadow_logging()  # Part J — shadow log handler (idempotent)
+    _setup_shadow_logging()  # shadow log handler (idempotent)
     app["client_session"] = aiohttp.ClientSession()
     app["background_tasks"] = set()
-    # Issue #71 Part A — parse alias map at startup. Stored in module-level
+    # Parse alias map at startup. Stored in module-level
     # _ALIASES_MAP so per-request handler can look up without re-parsing.
     _ALIASES_MAP = _load_aliases_map()
     raw_price = os.environ.get("ANTHROPIC_DIAL_PRICE_TABLE_JSON", "")
@@ -1613,7 +1612,7 @@ async def on_startup(app: web.Application) -> None:
          aliases_count=len(_ALIASES_MAP),
          alias_keys=sorted(_ALIASES_MAP) if _ALIASES_MAP else [],
          price_table_models=len(_PRICE_TABLE))
-    # Part F: probe the upstream's cache_control acceptance once at startup.
+    # Probe the upstream's cache_control acceptance once at startup.
     # Result drives `cache_control_strategy` reporting for the process lifetime.
     _UPSTREAM_CACHE_CONTROL_SUPPORT = await _probe_upstream_cache_control_support(
         app["client_session"]
@@ -1695,7 +1694,7 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
     # responses we surface the same logical id the client sent (e.g.
     # ``claude-sonnet-4-6``), not the post-normalization ``anthropic.*``
     # deployment id — with display tags like ``[1m]`` stripped so the API
-    # response matches the non-alias path. See #71 Part A.
+    # response matches the non-alias path.
     raw_client_model = requested_model
 
     # Normalise short Claude Code model names → DIAL deployment ids.
@@ -1708,7 +1707,7 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
         body,
     )
 
-    # Issue #71 Part A — apply alias map. Prefer the normalized deployment id,
+    # Apply alias map. Prefer the normalized deployment id,
     # then the raw client model (short Claude Code ids / display-tagged names),
     # so ANTHROPIC_DIAL_ALIASES_JSON keys like ``claude-sonnet-4-6`` still match
     # after ``_normalize_requested_model`` expands to ``anthropic.*``.
@@ -1778,11 +1777,11 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
          cache_control_strategy=cache_metric.get("strategy"),
          # Per-upstream capability gap (deepseek.* etc.)
          features_stripped=cache_metric.get("features_stripped") or [],
-         # Part G — schema integrity canary
+         # schema integrity canary
          tool_inventory_hash=cache_metric.get("tool_inventory_hash"),
          tool_inventory=cache_metric.get("tool_inventory") or [],
          tools_drift_count=cache_metric.get("tools_drift_count", 0),
-         # Part H — per-class tool composition
+         # per-class tool composition
          tools_native_count=cache_metric.get("tools_native_count", 0),
          tools_mcp_count=cache_metric.get("tools_mcp_count", 0),
          tools_other_count=cache_metric.get("tools_other_count", 0),
@@ -1889,7 +1888,7 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
                  cache_creation_input_tokens=int(_usage.get("cache_creation_input_tokens") or 0),
              ),
              **_mt)
-        # Part J — fire-and-forget shadow dispatch. Does not block the client.
+        # Fire-and-forget shadow dispatch. Does not block the client.
         if SHADOW_MODEL:
             primary_summary = _summarize_response_shape(upstream_json)
             _track_background_task(request.app, _run_shadow_dispatch(
@@ -1914,7 +1913,7 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
             estimated_input_tokens=_estimate_streaming_input_hint(body),
             # When alias is active, force the streamed message_start.model
             # to the client-view name (overrides whatever the upstream
-            # alias target reported). See #71 Part A.
+            # alias target reported).
             force_model_override=client_view_model if alias_active else None,
         )
     except Exception as e:
@@ -1965,7 +1964,7 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
 
 
 # ---------------------------------------------------------------------------
-# Part J — shadow-mode helpers
+# Shadow-mode helpers.
 # ---------------------------------------------------------------------------
 
 
@@ -2129,7 +2128,7 @@ async def _run_shadow_dispatch(
 
 
 # ---------------------------------------------------------------------------
-# Part I — OpenAI-shape sibling routes for multi-client (Cursor, Zed,
+# OpenAI-shape sibling routes for multi-client use (Cursor, Zed,
 # Continue, Aider, Goose, JetBrains AI Assistant). These editors don't allow
 # overriding the Anthropic base URL but DO allow overriding the OpenAI base
 # URL — pointing them at `http://127.0.0.1:8092/v1` gives the gateway a
@@ -2147,7 +2146,7 @@ async def _run_shadow_dispatch(
 
 
 def _openai_tool_inventory(body: dict[str, Any]) -> dict[str, Any]:
-    """Mirror `anthropic_to_openai`'s Part G+H tagging for an OpenAI-shape
+    """Mirror `anthropic_to_openai`'s tool-schema-hash and MCP-classification tagging for an OpenAI-shape
     body, since the upstream-call code path doesn't go through it.
     """
     tools_in = body.get("tools") or []
@@ -2363,7 +2362,7 @@ async def chat_completions(request: web.Request) -> Union[web.Response, web.Stre
                  cache_creation_input_tokens=0,
              ),
              **_o_mt)
-        # Part J — shadow dispatch on the OpenAI sibling route too.
+        # Shadow dispatch on the OpenAI sibling route too.
         if SHADOW_MODEL:
             _track_background_task(request.app, _run_shadow_dispatch(
                 session, body, _summarize_response_shape(upstream_json),
@@ -2372,7 +2371,7 @@ async def chat_completions(request: web.Request) -> Union[web.Response, web.Stre
         return web.json_response(upstream_json)
 
     # Streaming — passthrough with SSE comment-line stripping (mirrors the
-    # openrouter-adapter and aiproxy-adapter pattern).
+    # standard outbound-adapter pattern).
     response = web.StreamResponse(
         status=200,
         headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
@@ -2492,7 +2491,7 @@ def build_app() -> web.Application:
     app.router.add_get("/v1/models", models)
     app.router.add_post("/v1/messages", messages)
     app.router.add_post("/v1/messages/count_tokens", count_tokens_stub)
-    # Part I — OpenAI-shape sibling routes for Cursor, Zed, Continue, Aider,
+    # OpenAI-shape sibling routes for Cursor, Zed, Continue, Aider,
     # Goose, JetBrains AI. Multi-client governance story.
     app.router.add_post("/v1/chat/completions", chat_completions)
     return app

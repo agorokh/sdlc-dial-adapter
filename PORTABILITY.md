@@ -25,14 +25,19 @@ docker build -t anthropic-dial-adapter:local .
 docker run --rm -d --name anthropic-dial-adapter \
   -e PROJECT_KEY="$DIAL_API_KEY_PROJECT" \
   -e UPSTREAM_BASE="https://ai-proxy.lab.epam.com" \
+  -e BIND=0.0.0.0 \
   -p 127.0.0.1:8092:8092 \
   anthropic-dial-adapter:local
 
-# or Python directly
+# or Python directly (binds to 127.0.0.1 by default)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 PROJECT_KEY="$DIAL_API_KEY_PROJECT" python3 app.py
 ```
+
+Note: when running under Docker, the `BIND=0.0.0.0` override is required so the
+container's port forward reaches the listener inside. Running on the host
+directly, the default `BIND=127.0.0.1` is the right choice.
 
 Smoke check: `curl -sS http://127.0.0.1:8092/health` returns `ok`.
 
