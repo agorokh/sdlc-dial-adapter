@@ -1159,6 +1159,8 @@ _MODELS_FALLBACK = [
     # translation end-to-end.
     "qwen.qwen3-coder-480b-a35b-v1:0",
     "qwen.qwen3-235b-a22b-2507-v1:0",
+    "moonshotai.kimi-k2.5",
+    "minimax.minimax-m2.5",
     "mistral.devstral-2-123b",
     "deepseek.v3.2",
     # Google Gemma 3 instruction-tuned.
@@ -1175,6 +1177,8 @@ _MODELS_FALLBACK = [
 _DEFAULT_ADVERTISED_PREFIXES: tuple[str, ...] = (
     "anthropic.",
     "qwen.",
+    "moonshotai.",
+    "minimax.",
     "mistral.",
     "deepseek.",
     "google.",
@@ -1429,6 +1433,8 @@ def _select_alias_mapping(
 _PROVIDER_LABELS: dict[str, str] = {
     "anthropic.": "Claude",
     "qwen.": "Qwen",
+    "moonshotai.": "Kimi",
+    "minimax.": "MiniMax",
     "mistral.": "Mistral",
     "deepseek.": "DeepSeek",
     "google.": "Gemma",
@@ -1467,6 +1473,10 @@ def _owned_by_for_model_id(mid: str) -> str:
         return "anthropic-via-dial"
     if mid.startswith("qwen."):
         return "qwen-via-dial"
+    if mid.startswith("moonshotai."):
+        return "moonshot-via-dial"
+    if mid.startswith("minimax."):
+        return "minimax-via-dial"
     if mid.startswith("mistral."):
         return "mistral-via-dial"
     if mid.startswith("deepseek."):

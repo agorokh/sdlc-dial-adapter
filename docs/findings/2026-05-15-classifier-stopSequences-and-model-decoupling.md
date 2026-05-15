@@ -7,13 +7,13 @@
 
 Claude Code 2.1.142 running against an OSS Bedrock-backed model on DIAL (Qwen, Kimi, MiniMax) shows the auto-mode classifier failing every Bash/Skill call with:
 
-```
+```text
 <model> is temporarily unavailable, so auto mode cannot determine the safety of Bash right now.
 ```
 
 That message is misleading — it implies a transient gateway outage. The debug log (`~/.claude/debug/*.txt`) reveals a deterministic 400 every single time:
 
-```
+```text
 classifier_request_started ... model=qwen.qwen3-coder-480b-a35b-v1:0 stage=xml_s1
 classifier_request_finished outcome=error errorKind=Error:400
 "This model doesn't support the stopSequences field. Remove stopSequences and try again."
