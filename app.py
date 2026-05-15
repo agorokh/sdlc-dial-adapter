@@ -618,10 +618,6 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
                         )
                     tr_raw = tr.get("content")
                     if isinstance(tr_raw, list):
-                        # Preserve non-text structured blocks where possible via the
-                        # same translator used for ordinary message content (text +
-                        # image_url parts). Falling back avoids dropping vision-style
-                        # tool outputs silently.
                         tr_openai = _translate_content_to_openai(
                             tr_raw, cache_metric=cache_metric
                         )
@@ -631,6 +627,48 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
                         tr_openai = ""
                     else:
                         tr_openai = str(tr_raw)
+                    # Non-Anthropic DIAL deployments route through Bedrock
+                    # Converse. Two observed failure modes for tool-message
+                    # content on the OSS path:
+                    #
+                    # (a) Bare string that happens to parse as JSON
+                    #     (e.g. ``gh pr list --json`` returns
+                    #     ``[{"number":42},…]``) → DIAL auto-parses, stuffs
+                    #     the value into ``toolResult.content[0].json``,
+                    #     Bedrock 400s because ``json`` must be an OBJECT.
+                    # (b) OpenAI content-parts list
+                    #     ``[{"type":"text","text":"…"}]`` → DIAL gateway
+                    #     returns 502 "No route" because the chat-completions
+                    #     contract requires bare-string content for ``tool``.
+                    #
+                    # Workaround: keep bare-string but wrap payload in a
+                    # guaranteed JSON OBJECT ``{"output": <text>}``. DIAL
+                    # auto-parse now lands on a valid object, Bedrock
+                    # accepts, the receiving model unwraps transparently.
+                    # Anthropic-on-DIAL keeps its existing path untouched.
+                    target_model = str(body.get("model", "") or "")
+                    target_is_anthropic = target_model.startswith(
+                        ("anthropic.", "global.anthropic.")
+                    )
+                    if not target_is_anthropic:
+                        if isinstance(tr_openai, list):
+                            parts: list[str] = []
+                            for part in tr_openai:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    parts.append(part.get("text") or "")
+                                elif isinstance(part, dict) and part.get("type") == "image_url":
+                                    url = (part.get("image_url") or {}).get("url") or ""
+                                    parts.append(f"[image: {url}]" if url else "[image]")
+                                elif isinstance(part, dict):
+                                    parts.append(json.dumps(part, ensure_ascii=False))
+                                else:
+                                    parts.append(str(part))
+                            tr_openai = "\n".join(s for s in parts if s)
+                        elif not isinstance(tr_openai, str):
+                            tr_openai = str(tr_openai)
+                        tr_openai = json.dumps(
+                            {"output": tr_openai}, ensure_ascii=False
+                        )
                     messages.append({
                         "role": "tool",
                         "tool_call_id": sid,
@@ -1159,6 +1197,8 @@ _MODELS_FALLBACK = [
     # translation end-to-end.
     "qwen.qwen3-coder-480b-a35b-v1:0",
     "qwen.qwen3-235b-a22b-2507-v1:0",
+    "moonshotai.kimi-k2.5",
+    "minimax.minimax-m2.5",
     "mistral.devstral-2-123b",
     "deepseek.v3.2",
     # Google Gemma 3 instruction-tuned.
@@ -1175,6 +1215,8 @@ _MODELS_FALLBACK = [
 _DEFAULT_ADVERTISED_PREFIXES: tuple[str, ...] = (
     "anthropic.",
     "qwen.",
+    "moonshotai.",
+    "minimax.",
     "mistral.",
     "deepseek.",
     "google.",
@@ -1216,10 +1258,20 @@ _ADVERTISED_PREFIXES: tuple[str, ...] = _parsed_advertised_prefixes()
 # Tools-incapable upstreams still serve the safety-classifier path (it does
 # not need tools to return safe/risky), so stripping rather than blacklisting
 # the deployment keeps the Haiku-slot picker mapping useful.
-_PREFIX_INCAPABLE: dict[str, frozenset[str]] = {
-    "deepseek.": frozenset({"tools", "tool_choice", "stop_sequences", "stop"}),
-    "google.": frozenset({"tools", "tool_choice", "stop_sequences", "stop"}),
-}
+#
+# Registry: (deployment-id prefix, Anthropic/OpenAI body fields to strip before
+# upstream). Long-form investigation (classifier 400s, decoupling limits) lives
+# in ``docs/findings/2026-05-15-classifier-stopSequences-and-model-decoupling.md``.
+_UPSTREAM_PREFIX_STRIP_REGISTRY: tuple[tuple[str, frozenset[str]], ...] = (
+    ("deepseek.", frozenset({"tools", "tool_choice", "stop_sequences", "stop"})),
+    ("google.", frozenset({"tools", "tool_choice", "stop_sequences", "stop"})),
+    # Qwen / Kimi / MiniMax: native tool_use, but Bedrock Converse rejects
+    # ``stopSequences`` on classifier traffic; strip only stop fields (see findings doc).
+    ("qwen.", frozenset({"stop_sequences", "stop"})),
+    ("moonshotai.", frozenset({"stop_sequences", "stop"})),
+    ("minimax.", frozenset({"stop_sequences", "stop"})),
+)
+_PREFIX_INCAPABLE: dict[str, frozenset[str]] = dict(_UPSTREAM_PREFIX_STRIP_REGISTRY)
 
 
 def _strip_unsupported_features_for_upstream(
@@ -1417,6 +1469,8 @@ def _select_alias_mapping(
 _PROVIDER_LABELS: dict[str, str] = {
     "anthropic.": "Claude",
     "qwen.": "Qwen",
+    "moonshotai.": "Kimi",
+    "minimax.": "MiniMax",
     "mistral.": "Mistral",
     "deepseek.": "DeepSeek",
     "google.": "Gemma",
@@ -1445,6 +1499,11 @@ def _humanize_model_id(model_id: str) -> str:
     short = re.sub(r"-v\d+:\d+$", "", short)
     short = short.removeprefix("claude-").replace("-v", " v").replace("-", " ")
     pretty = " ".join(p.capitalize() if p[:1].isalpha() else p for p in short.split())
+    # Drop a leading token that repeats the family label (e.g. ``moonshotai.kimi-k2.5``
+    # → avoid ``Kimi Kimi K2.5``; ``minimax.minimax-m2.5`` → avoid ``MiniMax Minimax …``).
+    toks = pretty.split()
+    if toks and toks[0].lower() == family.lower():
+        pretty = " ".join(toks[1:])
     suffix = " (with thinking)" if base.endswith("-with-thinking") else ""
     return f"{family} {pretty}{suffix} (DIAL)"
 
@@ -1455,6 +1514,10 @@ def _owned_by_for_model_id(mid: str) -> str:
         return "anthropic-via-dial"
     if mid.startswith("qwen."):
         return "qwen-via-dial"
+    if mid.startswith("moonshotai."):
+        return "moonshotai-via-dial"
+    if mid.startswith("minimax."):
+        return "minimax-via-dial"
     if mid.startswith("mistral."):
         return "mistral-via-dial"
     if mid.startswith("deepseek."):
