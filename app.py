@@ -785,6 +785,11 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     stripped = _strip_unsupported_features_for_upstream(out, out.get("model", ""))
     cache_metric["features_stripped"] = stripped
 
+    # Clamp Claude Code's 32k ``max_tokens`` reservation when the input
+    # already eats most of the upstream context window — otherwise long
+    # agentic-loop sessions hit a Bedrock 400 "maximum context length".
+    _clamp_max_tokens_to_fit_context(out, cache_metric)
+
     return out, cache_metric
 
 
@@ -1271,6 +1276,82 @@ _UPSTREAM_PREFIX_STRIP_REGISTRY: tuple[tuple[str, frozenset[str]], ...] = (
     ("moonshotai.", frozenset({"stop_sequences", "stop"})),
     ("minimax.", frozenset({"stop_sequences", "stop"})),
 )
+# Approximate maximum context window (input + output) per upstream model prefix
+# or exact id, in tokens. Used by ``_clamp_max_tokens_to_fit_context`` to trim
+# Claude Code's 32k ``max_tokens`` reservation down to whatever the remaining
+# budget allows.
+_MODEL_MAX_CONTEXT: dict[str, int] = {
+    "qwen.qwen3-coder-480b-a35b-v1:0": 131_072,
+    "qwen.qwen3-235b-a22b-2507-v1:0": 131_072,
+    "qwen.": 131_072,
+    "moonshotai.kimi-k2.5": 128_000,
+    "moonshotai.": 128_000,
+    "minimax.minimax-m2.5": 245_760,
+    "minimax.": 200_000,
+    "deepseek.": 65_536,
+    "google.gemma-3-27b-it": 8_192,
+    "google.": 8_192,
+}
+_CONTEXT_SAFETY_MARGIN_TOKENS = 1024
+_MIN_OUTPUT_TOKENS_FLOOR = 1024
+
+
+def _model_max_context_tokens(model: str) -> int | None:
+    if not model:
+        return None
+    if model in _MODEL_MAX_CONTEXT:
+        return _MODEL_MAX_CONTEXT[model]
+    for prefix, ctx in _MODEL_MAX_CONTEXT.items():
+        if prefix.endswith(".") and model.startswith(prefix):
+            return ctx
+    return None
+
+
+def _estimate_request_input_tokens(openai_body: dict[str, Any]) -> int:
+    """Rough char/4 heuristic over the OUTBOUND OpenAI body."""
+    parts: list[str] = []
+    for key in ("messages", "tools", "tool_choice"):
+        val = openai_body.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str):
+            parts.append(val)
+        else:
+            parts.append(json.dumps(val, separators=(",", ":"), default=str))
+    return max(0, sum(len(p) for p in parts) // 4)
+
+
+def _clamp_max_tokens_to_fit_context(
+    openai_body: dict[str, Any],
+    cache_metric: dict[str, Any],
+) -> None:
+    """Trim ``max_tokens`` so input + output fits the upstream's context window.
+
+    Mutates ``openai_body`` in-place. Records the clamp on ``cache_metric``
+    under ``max_tokens_clamp`` so the request_in log shows when it fires.
+    """
+    model = str(openai_body.get("model") or "")
+    max_ctx = _model_max_context_tokens(model)
+    if max_ctx is None:
+        return
+    requested_out = openai_body.get("max_tokens")
+    if not isinstance(requested_out, int) or requested_out <= 0:
+        return
+    estimated_in = _estimate_request_input_tokens(openai_body)
+    budget = max_ctx - estimated_in - _CONTEXT_SAFETY_MARGIN_TOKENS
+    if budget >= requested_out:
+        return
+    clamped = max(_MIN_OUTPUT_TOKENS_FLOOR, budget)
+    openai_body["max_tokens"] = clamped
+    cache_metric["max_tokens_clamp"] = {
+        "original": requested_out,
+        "clamped": clamped,
+        "estimated_input_tokens": estimated_in,
+        "max_context": max_ctx,
+        "model": model,
+    }
+
+
 _PREFIX_INCAPABLE: dict[str, frozenset[str]] = dict(_UPSTREAM_PREFIX_STRIP_REGISTRY)
 
 
