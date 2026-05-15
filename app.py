@@ -618,10 +618,6 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
                         )
                     tr_raw = tr.get("content")
                     if isinstance(tr_raw, list):
-                        # Preserve non-text structured blocks where possible via the
-                        # same translator used for ordinary message content (text +
-                        # image_url parts). Falling back avoids dropping vision-style
-                        # tool outputs silently.
                         tr_openai = _translate_content_to_openai(
                             tr_raw, cache_metric=cache_metric
                         )
@@ -631,6 +627,48 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
                         tr_openai = ""
                     else:
                         tr_openai = str(tr_raw)
+                    # Non-Anthropic DIAL deployments route through Bedrock
+                    # Converse. Two observed failure modes for tool-message
+                    # content on the OSS path:
+                    #
+                    # (a) Bare string that happens to parse as JSON
+                    #     (e.g. ``gh pr list --json`` returns
+                    #     ``[{"number":42},…]``) → DIAL auto-parses, stuffs
+                    #     the value into ``toolResult.content[0].json``,
+                    #     Bedrock 400s because ``json`` must be an OBJECT.
+                    # (b) OpenAI content-parts list
+                    #     ``[{"type":"text","text":"…"}]`` → DIAL gateway
+                    #     returns 502 "No route" because the chat-completions
+                    #     contract requires bare-string content for ``tool``.
+                    #
+                    # Workaround: keep bare-string but wrap payload in a
+                    # guaranteed JSON OBJECT ``{"output": <text>}``. DIAL
+                    # auto-parse now lands on a valid object, Bedrock
+                    # accepts, the receiving model unwraps transparently.
+                    # Anthropic-on-DIAL keeps its existing path untouched.
+                    target_model = str(body.get("model", "") or "")
+                    target_is_anthropic = target_model.startswith(
+                        ("anthropic.", "global.anthropic.")
+                    )
+                    if not target_is_anthropic:
+                        if isinstance(tr_openai, list):
+                            parts: list[str] = []
+                            for part in tr_openai:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    parts.append(part.get("text") or "")
+                                elif isinstance(part, dict) and part.get("type") == "image_url":
+                                    url = (part.get("image_url") or {}).get("url") or ""
+                                    parts.append(f"[image: {url}]" if url else "[image]")
+                                elif isinstance(part, dict):
+                                    parts.append(json.dumps(part, ensure_ascii=False))
+                                else:
+                                    parts.append(str(part))
+                            tr_openai = "\n".join(s for s in parts if s)
+                        elif not isinstance(tr_openai, str):
+                            tr_openai = str(tr_openai)
+                        tr_openai = json.dumps(
+                            {"output": tr_openai}, ensure_ascii=False
+                        )
                     messages.append({
                         "role": "tool",
                         "tool_call_id": sid,
