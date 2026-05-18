@@ -114,7 +114,7 @@ metrics-and-dashboards pipeline can stand one up in minutes.
 Adopters using their own observability stack should read
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md) —
 it's the vendor-neutral contract documenting the JSON events the
-adapter emits to stdout.
+adapter writes to its structured log stream.
 
 ## License
 
