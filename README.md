@@ -113,8 +113,8 @@ reference InfluxDB exporter — so adopters who want a working
 metrics-and-dashboards pipeline can stand one up in minutes.
 Adopters using their own observability stack should read
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md) —
-it's the vendor-neutral contract documenting the JSON events the
-adapter writes to its structured log stream.
+the vendor-neutral contract for JSON events written to
+`ANTHROPIC_DIAL_ADAPTER_LOG` (or stderr when that path is unwritable).
 
 ## License
 
