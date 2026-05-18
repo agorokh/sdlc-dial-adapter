@@ -62,10 +62,10 @@ Each layer was live-verified against `qwen.qwen3-coder-480b-a35b-v1:0` on EPAM A
 |-------|------|
 | 1 | `curl POST /v1/messages` with `stop_sequences: ["STOP"]` against Qwen → 200 (was 400). |
 | 2 | Smoke test: `_build_tool_name_alias("mcp__plugin_deploy-on-aws_awsknowledge__aws___get_regional_availability")` returns a 64-char alias preserving the `mcp__<server>__` prefix. |
-| 3 | End-to-end `claude_dial_oss --print "gh pr list --json number,title via Bash; then echo done"` succeeds with `outcome=ok`. Same prompt previously triggered class #3 mid-stream. |
+| 3 | End-to-end Claude Code session (`claude --print "Use Bash to run gh pr list --json number,title, then echo done"`) succeeds with `outcome=ok` from the adapter. Same prompt previously triggered class #3 mid-stream. |
 | 4 | `curl POST /v1/messages` with 110k-token equivalent body → adapter logs `max_tokens_clamp={'original':32000,'clamped':16969,...}`, upstream returns 200. |
 | 5 | `curl POST /v1/messages/count_tokens` with small body → `{"input_tokens": 11}` (was `501 not_implemented`). |
 
 ## Acknowledgements
 
-This was investigated and shipped end-to-end during the 2026-05-15/16 EPAM DIAL sandbox session. The internal investigation notes live in the dial-sandbox repo at `docs/01_Vault/DialSandbox/06_Investigations/2026-05-15-multi-model-classifier-decoupling.md` (private). This document is the sanitized public consolidation.
+Investigated and shipped end-to-end during a multi-day debugging session against `qwen.qwen3-coder-480b-a35b-v1:0` and other OSS deployments on EPAM AI DIAL. This document is the public consolidation of the findings — the adapter PRs (#1, #3, #4) carry the corresponding code changes.

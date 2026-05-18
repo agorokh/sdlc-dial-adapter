@@ -268,7 +268,7 @@ def run_once() -> list[str]:
     window_seconds = window_minutes * 60.0
     measurement = _env("INFLUX_MEASUREMENT", default="adapter_metrics")
     influx_url = _env("INFLUX_URL", "INFLUXDB_URL", default="http://influxdb:8086")
-    org = _env("INFLUX_ORG", "INFLUXDB_ORG", default="dial-sandbox")
+    org = _env("INFLUX_ORG", "INFLUXDB_ORG", default="default")
     bucket = _env("INFLUX_BUCKET", "INFLUXDB_BUCKET", default="dial-metrics")
     token = _env("INFLUX_TOKEN", "INFLUXDB_TOKEN")
     if not token:

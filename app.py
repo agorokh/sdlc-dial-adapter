@@ -1213,8 +1213,8 @@ def _count_tokens_for_anthropic_body(body: dict[str, Any]) -> int:
     tool_choice, padded ``_COUNT_TOKENS_PAD_FACTOR`` on the high side.
     JSON key/quote overhead is intentional — this endpoint only drives
     compaction-trigger math, where over-counting is safer than under.
-    Same approach as the internal ``_estimate_request_input_tokens``
-    but operating on the *Anthropic-shape* body (pre-translation)
+    Mirrors the in-adapter ``_estimate_request_input_tokens`` helper
+    but operates on the *Anthropic-shape* body (pre-translation)
     rather than the OpenAI-shape body (post-translation). Keeps the
     two paths intentionally independent so each can evolve.
     """
@@ -1538,9 +1538,11 @@ def _alias_long_tool_names(
 # Approximate maximum context window (input + output) per upstream model prefix
 # or exact id, in tokens. Used by ``_clamp_max_tokens_to_fit_context`` to trim
 # Claude Code's 32k ``max_tokens`` reservation down to whatever the remaining
-# budget allows. Empirical values from the Bedrock/DIAL probes documented in
-# 06_Investigations/2026-05-15-multi-model-classifier-decoupling.md. Errs
-# conservative — a 1k safety margin is taken on top of whatever value is here.
+# budget allows. Empirical values from Bedrock/DIAL probes; see
+# docs/findings/2026-05-16-bedrock-context-and-tokens-hardening.md
+# for the full failure-class table and how these numbers were
+# measured. Errs conservative — a 1k safety margin is taken on top
+# of whatever value is here.
 _MODEL_MAX_CONTEXT: dict[str, int] = {
     "qwen.qwen3-coder-480b-a35b-v1:0": 131_072,
     "qwen.qwen3-235b-a22b-2507-v1:0": 131_072,
