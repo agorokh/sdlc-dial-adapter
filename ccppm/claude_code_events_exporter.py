@@ -359,7 +359,7 @@ def to_line_protocol(event_name: str, attrs: dict, ts_ns: int,
             field_parts.append(f"{_esc_tag(k)}={'true' if v else 'false'}")
         elif isinstance(v, int):
             field_parts.append(f"{_esc_tag(k)}={v}i")
-        elif isinstance(v, float):
+        elif isinstance(v, float) and math.isfinite(v):
             field_parts.append(f"{_esc_tag(k)}={v}")
         elif isinstance(v, str):
             field_parts.append(f'{_esc_tag(k)}="{_esc_string_field(v)}"')
