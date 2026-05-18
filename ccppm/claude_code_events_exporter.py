@@ -120,9 +120,9 @@ def _extract_api_request(attrs: dict) -> tuple[dict[str, str], dict[str, Any]]:
         ("cache_creation_tokens", "cache_creation_tokens"),
         ("cost_usd", "cost_usd"),
     ):
-        v = attrs.get(k_src)
-        if isinstance(v, (int, float)):
-            fields[k_dst] = float(v)
+        fv = _finite_float(attrs.get(k_src))
+        if fv is not None:
+            fields[k_dst] = fv
     # stop_reason occasionally on api_request events — newer SDK versions
     stop_reason = attrs.get("stop_reason")
     if isinstance(stop_reason, str) and stop_reason:
@@ -140,13 +140,13 @@ def _extract_tool_result(attrs: dict) -> tuple[dict[str, str], dict[str, Any]]:
         "error_type": str(attrs.get("error_type", "")),
     }
     fields: dict[str, Any] = {}
-    dur = attrs.get("duration_ms")
-    if isinstance(dur, (int, float)):
-        fields["duration_ms"] = float(dur)
+    dur = _finite_float(attrs.get("duration_ms"))
+    if dur is not None:
+        fields["duration_ms"] = dur
     for k in ("tool_input_size_bytes", "tool_result_size_bytes"):
-        v = attrs.get(k)
-        if isinstance(v, (int, float)):
-            fields[k] = float(v)
+        fv = _finite_float(attrs.get(k))
+        if fv is not None:
+            fields[k] = fv
     # Heartbeat for counting — every emitted row is one tool_result
     fields["count"] = 1
     return tags, fields
@@ -162,9 +162,9 @@ def _extract_api_retries_exhausted(attrs: dict) -> tuple[dict[str, str], dict[st
     }
     fields: dict[str, Any] = {"count": 1}
     for k in ("total_attempts", "total_retry_duration_ms"):
-        v = attrs.get(k)
-        if isinstance(v, (int, float)):
-            fields[k] = float(v)
+        fv = _finite_float(attrs.get(k))
+        if fv is not None:
+            fields[k] = fv
     return tags, fields
 
 
@@ -178,9 +178,9 @@ def _extract_api_error(attrs: dict) -> tuple[dict[str, str], dict[str, Any]]:
     }
     fields: dict[str, Any] = {"count": 1}
     for k in ("duration_ms", "attempt"):
-        v = attrs.get(k)
-        if isinstance(v, (int, float)):
-            fields[k] = float(v)
+        fv = _finite_float(attrs.get(k))
+        if fv is not None:
+            fields[k] = fv
     return tags, fields
 
 
@@ -201,10 +201,22 @@ def _extract_user_prompt(attrs: dict) -> tuple[dict[str, str], dict[str, Any]]:
         "command_source": str(attrs.get("command_source", "")),
     }
     fields: dict[str, Any] = {"count": 1}
-    pl = attrs.get("prompt_length")
-    if isinstance(pl, (int, float)):
-        fields["prompt_length"] = float(pl)
+    pl = _finite_float(attrs.get("prompt_length"))
+    if pl is not None:
+        fields["prompt_length"] = pl
     return tags, fields
+
+
+def _finite_float(v: Any) -> float | None:
+    """Return a finite float for line-protocol fields, or ``None`` to omit."""
+    if isinstance(v, bool):
+        return None
+    if not isinstance(v, (int, float)):
+        return None
+    x = float(v)
+    if not math.isfinite(x):
+        return None
+    return x
 
 
 def _parse_non_negative_int(v: Any) -> int:
@@ -250,13 +262,13 @@ def _extract_compaction(attrs: dict) -> tuple[dict[str, str], dict[str, Any]]:
     pre: float | None = None
     post: float | None = None
     for k in ("duration_ms", "pre_tokens", "post_tokens"):
-        v = attrs.get(k)
-        if isinstance(v, (int, float)):
-            fields[k] = float(v)
+        fv = _finite_float(attrs.get(k))
+        if fv is not None:
+            fields[k] = fv
             if k == "pre_tokens":
-                pre = float(v)
+                pre = fv
             elif k == "post_tokens":
-                post = float(v)
+                post = fv
     if pre is not None and post is not None:
         fields["token_delta"] = pre - post
     return tags, fields
@@ -277,9 +289,9 @@ def _extract_hook_execution_complete(attrs: dict) -> tuple[dict[str, str], dict[
         "num_blocking": float(n_block),
         "num_non_blocking_error": float(n_err),
     }
-    td = attrs.get("total_duration_ms")
-    if isinstance(td, (int, float)):
-        fields["total_duration_ms"] = float(td)
+    td = _finite_float(attrs.get("total_duration_ms"))
+    if td is not None:
+        fields["total_duration_ms"] = td
     return tags, fields
 
 
