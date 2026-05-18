@@ -1204,6 +1204,8 @@ def _count_tokens_for_anthropic_body(body: dict[str, Any]) -> int:
 
     chars/4 over a stable serialization of system + messages + tools +
     tool_choice, padded ``_COUNT_TOKENS_PAD_FACTOR`` on the high side.
+    JSON key/quote overhead is intentional — this endpoint only drives
+    compaction-trigger math, where over-counting is safer than under.
     Same approach as the internal ``_estimate_request_input_tokens``
     but operating on the *Anthropic-shape* body (pre-translation)
     rather than the OpenAI-shape body (post-translation). Keeps the
@@ -1454,6 +1456,7 @@ def _alias_long_tool_names(
 
     aliases: dict[str, str] = {}
     rev: dict[str, str] = {}  # original → alias, for in-pass rewrite
+    reserved_short: set[str] = set()
 
     tools_out = openai_body.get("tools")
     if isinstance(tools_out, list):
@@ -1464,18 +1467,33 @@ def _alias_long_tool_names(
             if not isinstance(fn, dict):
                 continue
             raw = fn.get("name")
+            if isinstance(raw, str) and len(raw) <= max_len:
+                reserved_short.add(raw)
+
+        for entry in tools_out:
+            if not isinstance(entry, dict):
+                continue
+            fn = entry.get("function")
+            if not isinstance(fn, dict):
+                continue
+            raw = fn.get("name")
             if not isinstance(raw, str) or len(raw) <= max_len:
                 continue
             alias = rev.get(raw) or _build_tool_name_alias(raw, max_len=max_len)
-            # Disambiguate the extremely unlikely 24-bit hash collision with a
-            # second rewrite. We trust the recorded reverse map (``rev``) so a
-            # name that has already been aliased always re-maps the same way.
-            collision_seed = 1
-            while alias in aliases and aliases[alias] != raw:
-                alias = _build_tool_name_alias(f"{raw}#{collision_seed}", max_len=max_len)
+            # Disambiguate hash collisions and aliases that collide with an
+            # existing short tool name (would corrupt the reverse map).
+            collision_seed = 0
+            while (
+                (alias in aliases and aliases[alias] != raw)
+                or alias in reserved_short
+            ):
                 collision_seed += 1
+                alias = _build_tool_name_alias(
+                    f"{raw}#{collision_seed}", max_len=max_len
+                )
             aliases[alias] = raw
             rev[raw] = alias
+            reserved_short.add(alias)
             fn["name"] = alias
 
     # Apply to assistant tool_calls in message history so a re-played
