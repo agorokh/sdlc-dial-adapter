@@ -1602,6 +1602,11 @@ def _clamp_max_tokens_to_fit_context(
     Qwen-on-Bedrock's 131k cap on any conversation past ~99k input tokens,
     yielding a Bedrock 400 "maximum context length" that the user sees as
     `API Error: 400 upstream returned 400` mid-agentic-loop.
+
+    Clamps to the remaining ``budget`` only — never ``max(1024, budget)``, which
+    would raise ``max_tokens`` above the context window when ``budget < 1024``.
+    When ``budget <= 0``, raises ``TranslationError`` (400) with
+    ``input_exceeds_context`` on the metric instead of forwarding a doomed request.
     """
     model = str(openai_body.get("model") or "")
     max_ctx = _model_max_context_tokens(model)
