@@ -1235,10 +1235,10 @@ async def count_tokens(request: web.Request) -> web.Response:
     adapter returned 501 and Claude Code blasted ahead blind, causing
     Bedrock-side context-overflow 400s on long agentic-loop sessions.
 
-    Uses tiktoken's ``cl100k_base`` encoder (GPT-4 BPE) as a stable BPE
-    approximation across the bake-off-winner OSS upstreams (qwen/kimi/
-    minimax) plus all Anthropic deployments. Padded 5% on the high side
-    so the client errs toward compacting too early rather than too late.
+    chars/4 over a stable serialization of system + messages + tools +
+    tool_choice (see ``_count_tokens_for_anthropic_body``), padded
+    ``_COUNT_TOKENS_PAD_FACTOR`` (10%) on the high side so the client
+    errs toward compacting too early rather than too late.
     """
     try:
         body = await request.json()
@@ -1448,7 +1448,8 @@ def _alias_long_tool_names(
     """
     if not target_model:
         return {}
-    if target_model.startswith(("anthropic.", "global.anthropic.")):
+    tm = target_model.strip().lower()
+    if tm.startswith(("anthropic.", "global.anthropic.")):
         return {}
 
     aliases: dict[str, str] = {}
@@ -1528,7 +1529,6 @@ _MODEL_MAX_CONTEXT: dict[str, int] = {
     "google.": 8_192,
 }
 _CONTEXT_SAFETY_MARGIN_TOKENS = 4096
-_MIN_OUTPUT_TOKENS_FLOOR = 1024  # never clamp below this — would defeat the request
 
 
 def _model_max_context_tokens(model: str) -> int | None:
@@ -1538,22 +1538,29 @@ def _model_max_context_tokens(model: str) -> int | None:
         return None
     if m in _MODEL_MAX_CONTEXT:
         return _MODEL_MAX_CONTEXT[m]
-    for prefix, ctx in _MODEL_MAX_CONTEXT.items():
-        if prefix.endswith(".") and m.startswith(prefix):
-            return ctx
-    return None
+    # Longest matching prefix wins — avoids broader keys shadowing narrower ones
+    # when declaration order in ``_MODEL_MAX_CONTEXT`` changes.
+    prefix_hits = [
+        (prefix, ctx)
+        for prefix, ctx in _MODEL_MAX_CONTEXT.items()
+        if prefix.endswith(".") and m.startswith(prefix)
+    ]
+    if not prefix_hits:
+        return None
+    return max(prefix_hits, key=lambda pair: len(pair[0]))[1]
 
 
 def _estimate_request_input_tokens(openai_body: dict[str, Any]) -> int:
     """Rough char/4 heuristic over the OUTBOUND OpenAI body.
 
-    Includes messages, system content embedded in messages, tools (schemas can
-    be huge — Claude Code sends ~32 of them), and tool_choice. Conservative —
-    a slight overestimate is preferable to under-counting and tripping the
-    real upstream limit.
+    Includes messages (``anthropic_to_openai`` moves top-level ``system`` into
+    a leading system message), an explicit top-level ``system`` if present,
+    tools (schemas can be huge — Claude Code sends ~32 of them), and
+    tool_choice. Conservative — a slight overestimate is preferable to
+    under-counting and tripping the real upstream limit.
     """
     parts: list[str] = []
-    for key in ("messages", "tools", "tool_choice"):
+    for key in ("system", "messages", "tools", "tool_choice"):
         val = openai_body.get(key)
         if val is None:
             continue
@@ -1589,7 +1596,20 @@ def _clamp_max_tokens_to_fit_context(
     budget = max_ctx - estimated_in - _CONTEXT_SAFETY_MARGIN_TOKENS
     if budget >= requested_out:
         return  # plenty of room — no clamp
-    clamped = max(_MIN_OUTPUT_TOKENS_FLOOR, budget)
+    if budget <= 0:
+        cache_metric["input_exceeds_context"] = {
+            "estimated_input_tokens": estimated_in,
+            "max_context": max_ctx,
+            "remaining_output_budget": budget,
+            "model": model,
+        }
+        raise TranslationError(
+            f"estimated input ({estimated_in} tokens) exceeds context window "
+            f"for {model!r} (max {max_ctx} tokens, "
+            f"{_CONTEXT_SAFETY_MARGIN_TOKENS}-token safety margin)",
+            status=400,
+        )
+    clamped = budget  # never raise max_tokens above remaining budget
     openai_body["max_tokens"] = clamped
     cache_metric["max_tokens_clamp"] = {
         "original": requested_out,
