@@ -1,0 +1,1919 @@
+{
+  "uid": null,
+  "title": "Claude Code — Anthropic vs DIAL routing comparison",
+  "tags": [
+    "claude-code",
+    "dial",
+    "comparison"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "client",
+        "label": "Client (wrapper)",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "${DS_INFLUXDB}"
+        },
+        "query": "from(bucket: \"dial-metrics\") |> range(start: -7d) |> filter(fn: (r) => r._measurement == \"prometheus\" or r._measurement == \"adapter_metrics\") |> keep(columns: [\"client.name\"]) |> distinct(column: \"client.name\")",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "sort": 1
+      },
+      {
+        "name": "family",
+        "label": "Upstream family",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "${DS_INFLUXDB}"
+        },
+        "query": "from(bucket: \"dial-metrics\") |> range(start: -7d) |> filter(fn: (r) => r._measurement == \"adapter_metrics\") |> filter(fn: (r) => r[\"target_model_family\"] != \"none\"                      and r[\"target_model_family\"] != \"unknown\") |> keep(columns: [\"target_model_family\"]) |> distinct(column: \"target_model_family\")",
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "transparent": true,
+      "options": {
+        "mode": "markdown",
+        "content": "**Claude Code 2.1 — same harness, different upstream.** Real Anthropic Claude (via DIAL) vs OSS models routed through the same DIAL gateway. Filter with `$client` (wrapper) and `$family` (upstream provider). Read: table → trends → wire-health → productivity."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Models in play — by (wrapper, model) in window",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 9
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "One row per (client.name, model) combination with traffic in the selected window. Columns from Claude Code's OTel SDK. 'Turns / session' is mean count of token-usage emit events per session.id (higher = more conversation turns for the same task — Gemini council called this the actual viability signal). 'Cost USD' is claude_code.cost.usage which IS populated for OSS upstreams via DIAL response usage echo.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and r.type == \"input\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"model\",\"client.name\"])\n  |> sum()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Input tokens\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "B",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and r.type == \"output\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"model\",\"client.name\"])\n  |> sum()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Output tokens\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "C",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.cost.usage\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"model\",\"client.name\"])\n  |> sum()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Cost USD\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "D",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and r.type == \"input\" and r._value > 0)\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> keep(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> group(columns: [\"model\",\"client.name\"])\n  |> distinct(column: \"session.id\")\n  |> count()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Sessions\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "E",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and r.type == \"input\" and r._value > 0)\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> count()\n  |> group(columns: [\"model\",\"client.name\"])\n  |> mean()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Turns / session\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "F",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and r.type == \"cacheRead\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"model\",\"client.name\"])\n  |> sum()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Cache read\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "G",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and r.type == \"cacheCreation\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"client.name\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"model\",\"client.name\"])\n  |> sum()\n  |> keep(columns: [\"model\",\"client.name\",\"_value\"])\n  |> rename(columns: {_value: \"Cache write\"})",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "valueLabel": "",
+            "keepLabels": [
+              "model",
+              "client.name"
+            ],
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "_start": true,
+              "_stop": true,
+              "_measurement": true,
+              "_field": true
+            },
+            "indexByName": {
+              "model": 0,
+              "client.name": 1,
+              "Sessions": 2,
+              "Turns / session": 3,
+              "Input tokens": 4,
+              "Output tokens": 5,
+              "Cache read": 6,
+              "Cache write": 7,
+              "Cost USD": 8
+            },
+            "renameByName": {
+              "model": "Model",
+              "client.name": "Wrapper"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Cost USD",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cost USD"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 0.1
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "red",
+                      "value": 1.0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Input tokens"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Output tokens"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Turns / session"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cache read"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1
+                    },
+                    {
+                      "color": "green",
+                      "value": 1000
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cache write"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Latency p50 (ms) — by family",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "End-to-end wall-clock from /v1/messages POST to upstream stream completion, by upstream family. Source: adapter_metrics — bridge wire-level. Lower is better. Legend shows last / mean / max so you can eyeball stability vs absolute number.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\")\n  |> filter(fn: (r) => r._field == \"end_to_end_p50_ms\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "displayName": "${__field.labels.target_model_family}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 4,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Latency p95 (ms) — by family",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "End-to-end wall-clock from /v1/messages POST to upstream stream completion, by upstream family. Source: adapter_metrics — bridge wire-level. Lower is better. Legend shows last / mean / max so you can eyeball stability vs absolute number.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\")\n  |> filter(fn: (r) => r._field == \"end_to_end_p95_ms\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "displayName": "${__field.labels.target_model_family}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "lineInterpolation": "smooth",
+            "spanNulls": false,
+            "showPoints": "auto",
+            "pointSize": 4,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Token volume per minute (stacked by model)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 8,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Tokens emitted per minute, stacked area by model. Helps spot which model is consuming the most traffic right now.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\" and (r.type == \"input\" or r.type == \"output\"))\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> filter(fn: (r) => r._value > 0)\n  |> group(columns: [\"model\",\"type\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: true, columns: [\"_value\"])\n  |> filter(fn: (r) => exists r._value)\n  |> group(columns: [\"model\",\"type\"])\n  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels.model}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Cost USD per minute — SDK self-reported (OSS over-charged)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 20,
+        "w": 8,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "**Source:** Claude Code SDK's `claude_code.cost.usage`. Charges Anthropic models correctly against an internal price table, but **falls back to Opus rates ($5/$25 per 1M) for any unrecognised upstream**, so OSS models (Qwen, Kimi, MiniMax, DeepSeek) appear ~10× more expensive here than they actually are. Use **'Estimated cost per family'** below for Bedrock-verified pricing computed by the DIAL adapter.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.cost.usage\" and r._value > 0)\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: true, columns: [\"_value\"])\n  |> filter(fn: (r) => exists r._value)\n  |> group(columns: [\"model\"])\n  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "displayName": "${__field.labels.model}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 21,
+      "title": "Estimated cost per family — Bedrock-verified (operator price table)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 20,
+        "w": 8,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "**Source:** DIAL adapter's `cost_usd_estimate` per response, summed by family. Uses the operator-curated `ANTHROPIC_DIAL_PRICE_TABLE_JSON` env (Bedrock list prices for US East Ohio as of 2026-05-14). Authoritative for OSS upstreams where the SDK's internal table falls back to Opus rates.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"cost_usd_estimate_total\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> filter(fn: (r) => r._value > 0)\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "displayName": "${__field.labels.target_model_family}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 280
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "piechart",
+      "title": "Token mix by type — all models",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Total tokens per claude_code.token.usage type across all models in window. If cacheRead is small/zero, the bridge is not delivering Bedrock cache hits — every turn pays full input price.",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.token.usage\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"model\",\"type\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"type\"])\n  |> sum()\n  |> filter(fn: (r) => r._value > 0)\n  |> keep(columns: [\"type\",\"_value\"])",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels.type}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "displayLabels": [
+          "percent"
+        ],
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Cache-control behaviour by upstream family",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "How the bridge handles cache_control markers per family. translated_dial_breakpoint = sent on to DIAL as a cache marker (Anthropic only). dropped_non_anthropic_upstream = stripped because DIAL Qwen/Gemma/DeepSeek routes reject cache markers (would otherwise return 502 No route).",
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and (\n        r._field == \"cache_control_strat_translated_dial_breakpoint\" or\n        r._field == \"cache_control_strat_dropped_non_anthropic_upstream\"))\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> map(fn: (r) => ({ r with strategy:\n        if r._field == \"cache_control_strat_translated_dial_breakpoint\" then \"translated\"\n        else \"dropped\" }))\n  |> group(columns: [\"target_model_family\",\"strategy\"])\n  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels.target_model_family} (${__field.labels.strategy})",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "SSE emission ratio",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 6,
+        "h": 5
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Emitted Anthropic events per consumed OpenAI chunk. Green ≥ 0.99 — bridge is wrapping each upstream chunk with proper Anthropic-shape lifecycle events.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"sse_event_emission_ratio_mean\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> group()\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "area",
+        "colorMode": "background",
+        "textMode": "auto",
+        "orientation": "horizontal",
+        "justifyMode": "auto",
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 8,
+      "title": "Tool-use round-trip success",
+      "type": "stat",
+      "gridPos": {
+        "x": 6,
+        "y": 36,
+        "w": 6,
+        "h": 5
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Fraction of stop_reason=tool_use responses that received a tool_result follow-up. Green ≥ 0.99.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"tool_use_round_trip_success_rate\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> group()\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "area",
+        "colorMode": "background",
+        "textMode": "auto",
+        "orientation": "horizontal",
+        "justifyMode": "auto",
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 9,
+      "title": "Partial-message error rate",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 36,
+        "w": 6,
+        "h": 5
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Streaming responses that closed before a final block. Red ≥ 1%.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"partial_message_error_rate\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> group()\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.005
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "area",
+        "colorMode": "background",
+        "textMode": "auto",
+        "orientation": "horizontal",
+        "justifyMode": "auto",
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 10,
+      "title": "Upstream 429 rate-limits",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 36,
+        "w": 6,
+        "h": 5
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "DIAL project key quota saturation count. Expected operational signal — Claude Code retries automatically.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"errors_upstream_rate_limit_429\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => contains(value: r[\"target_model_family\"], set: ${family:json}))\n  |> group()\n  |> aggregateWindow(every: 1m, fn: max, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "area",
+        "colorMode": "background",
+        "textMode": "auto",
+        "orientation": "horizontal",
+        "justifyMode": "auto",
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 11,
+      "title": "Lines of code added / removed per minute — by client",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 12,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "claude_code.lines_of_code.count rolled per minute, stacked by client + type (added / removed).",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.lines_of_code.count\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> filter(fn: (r) => r._value > 0)\n  |> group(columns: [\"client.name\",\"type\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: true, columns: [\"_value\"])\n  |> filter(fn: (r) => exists r._value)\n  |> group(columns: [\"client.name\",\"type\"])\n  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels[\"client.name\"]} (${__field.labels.type})",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Code-edit-tool decisions",
+      "type": "piechart",
+      "gridPos": {
+        "x": 12,
+        "y": 41,
+        "w": 12,
+        "h": 8
+      },
+      "transparent": false,
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "claude_code.code_edit_tool.decision counts — accept / reject / undo distribution.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.code_edit_tool.decision\")\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> filter(fn: (r) => r._value > 0)\n  |> group(columns: [\"decision\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> last()\n  |> group(columns: [\"decision\"])\n  |> sum()",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels.decision}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "text",
+      "title": "",
+      "transparent": true,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Harness viability — does the agentic loop close on OSS?**  Lower retries-exhausted, higher tool success, smaller edit deltas = OSS keeps up with Anthropic."
+      }
+    },
+    {
+      "id": 16,
+      "title": "Latency p50 (ms) — by family (SDK ground truth)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "claude_code.api_request event duration_ms percentile 50 grouped by target_model_family. Sourced from Claude Code's OTel SDK (event-derived) — more accurate than bridge-side because it includes the full agentic loop time, not just the upstream HTTP RTT.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "import \"experimental\"\nfrom(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r._field == \"duration_ms\" and r.event_name == \"api_request\")\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 1m, fn: (column, tables=<-) => tables |> quantile(q: 0.50, column: column), createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "displayName": "${__field.labels.target_model_family}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "Latency p95 (ms) — by family (SDK ground truth)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "p95 of claude_code.api_request duration_ms by family. The signal that flags 'feels slow' UX.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "import \"experimental\"\nfrom(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r._field == \"duration_ms\" and r.event_name == \"api_request\")\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 1m, fn: (column, tables=<-) => tables |> quantile(q: 0.95, column: column), createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "displayName": "${__field.labels.target_model_family}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "Tool success rate — by client + tool",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Per-(client, tool) success ratio from claude_code_events tool_result. Computed as success_count / (success + failure). Green ≥ 95%, yellow 80–95%, red < 80%.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "succ = from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r._field == \"count\" and r.event_name == \"tool_result\")\n  |> group(columns: [\"client_name\",\"tool_name\",\"success\"])\n  |> sum()\n  |> group(columns: [\"client_name\",\"tool_name\"])\n  |> pivot(rowKey: [\"client_name\",\"tool_name\"], columnKey: [\"success\"], valueColumn: \"_value\")\nratio = succ\n  |> map(fn: (r) => ({\n        client_name: r.client_name,\n        tool_name: r.tool_name,\n        _value: float(v: if exists r[\"true\"] then r[\"true\"] else 0) /\n                float(v: (if exists r[\"true\"] then r[\"true\"] else 0) + (if exists r[\"false\"] then r[\"false\"] else 0)),\n        _field: \"success_rate\"\n     }))\nratio\n  |> group(columns: [\"client_name\",\"tool_name\"])",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "displayName": "${__field.labels.client_name} / ${__field.labels.tool_name}",
+          "noValue": "—",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.8
+              },
+              {
+                "color": "green",
+                "value": 0.95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "orientation": "horizontal",
+        "displayMode": "lcd",
+        "showUnfilled": true
+      }
+    },
+    {
+      "id": 19,
+      "title": "API retries-exhausted — by family",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 12,
+        "y": 59,
+        "w": 6,
+        "h": 6
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Count of claude_code.api_retries_exhausted events. Each one is a turn where ALL retry attempts (with exponential backoff) failed and the harness gave up. Higher = less viable.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r._field == \"count\" and r.event_name == \"api_retries_exhausted\")\n  |> group(columns: [\"target_model_family\",\"status_code\"])\n  |> sum()",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "${__field.labels.target_model_family} (${__field.labels.status_code})",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "orientation": "horizontal",
+        "displayMode": "lcd",
+        "showUnfilled": true
+      }
+    },
+    {
+      "id": 20,
+      "title": "Edit surgicality — lines added vs removed by client",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 18,
+        "y": 59,
+        "w": 6,
+        "h": 6
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Net code-edit footprint per client. OSS models often 'lazy-code' (deleting many lines to add a few) — the deleted/added ratio is a viability signal beyond raw success rate. From claude_code.lines_of_code.count with type=added/removed.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"prometheus\")\n  |> filter(fn: (r) => r._field == \"claude_code.lines_of_code.count\" and r._value > 0)\n  |> filter(fn: (r) => contains(value: r[\"client.name\"], set: ${client:json}))\n  |> filter(fn: (r) => r.model =~ /^(${family:regex})\\.|^global\\.(${family:regex})\\.|^(us|eu|apac|ap|sa|ca)\\.(${family:regex})\\./ or (r.model =~ /^claude-/ and contains(value: \"anthropic\", set: ${family:json})))\n  |> group(columns: [\"client.name\",\"type\",\"session.id\"])\n  |> sort(columns: [\"_time\"])\n  |> difference(nonNegative: true, columns: [\"_value\"])\n  |> filter(fn: (r) => exists r._value)\n  |> group(columns: [\"client.name\",\"type\"])\n  |> sum()\n  |> keep(columns: [\"client.name\",\"type\",\"_value\"])",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__field.labels[\"client.name\"]} / ${__field.labels.type}",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "orientation": "horizontal",
+        "displayMode": "lcd",
+        "showUnfilled": true
+      }
+    },
+    {
+      "id": 22,
+      "type": "text",
+      "title": "",
+      "transparent": true,
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Hooks, permission escalations, compaction, and TTFT — OSS harness friction beyond raw latency.**  Surfaces hook failures, deliberate bypassPermissions transitions, compaction pressure, and beta-trace time-to-first-token by upstream model family."
+      }
+    },
+    {
+      "id": 23,
+      "title": "Hook execution health — blocking + non-blocking errors",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 67,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Per-minute sum of num_blocking + num_non_blocking_error from claude_code.hook_execution_complete, grouped by client and hook_event. 0 = green, ≥1 yellow, ≥5 red.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r._field == \"hook_errors\" and r.event_name == \"hook_execution_complete\")\n  |> filter(fn: (r) => contains(value: r.client_name, set: ${client:json}))\n  |> group(columns: [\"client_name\",\"hook_event\"])\n  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "${__field.labels.client_name} / ${__field.labels.hook_event}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "spanNulls": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 24,
+      "title": "Compaction events — count + avg token delta",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 67,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "claude_code.compaction: per-minute event count (A) and mean pre→post token delta (B). Rising compaction frequency flags OSS context pressure.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r.event_name == \"compaction\" and r._field == \"count\")\n  |> filter(fn: (r) => contains(value: r.client_name, set: ${client:json}))\n  |> group(columns: [\"client_name\",\"trigger\",\"success\"])\n  |> aggregateWindow(every: 1m, fn: sum, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "B",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r.event_name == \"compaction\" and r._field == \"token_delta\")\n  |> filter(fn: (r) => contains(value: r.client_name, set: ${client:json}))\n  |> group(columns: [\"client_name\",\"trigger\",\"success\"])\n  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Δtokens ${__field.labels.client_name} (${__field.labels.trigger}/${__field.labels.success})"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    },
+    {
+      "id": 25,
+      "title": "Permission mode escalations (to bypassPermissions)",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 75,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "Count of claude_code.permission_mode_changed transitions into bypassPermissions (audit signal). 0 = green, any = yellow.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_events\" and r._field == \"count\" and r.event_name == \"permission_mode_changed\" and r.to_mode == \"bypassPermissions\")\n  |> filter(fn: (r) => contains(value: r.client_name, set: ${client:json}))\n  |> group(columns: [\"client_name\"])\n  |> sum()",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "auto",
+        "orientation": "horizontal",
+        "justifyMode": "auto",
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 26,
+      "title": "TTFT p50 / p95 (ms) — by model family (beta traces)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 6,
+        "y": 75,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "From measurement claude_code_traces (sidecar projects claude_code.llm_request spans with ttft_ms). Requires OTLP traces enabled on the collector + claude-code-traces-exporter. p50 (A) and p95 (B) per target_model_family per minute.",
+      "targets": [
+        {
+          "refId": "A",
+          "query": "import \"experimental\"\nfrom(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_traces\" and r._field == \"ttft_ms\" and r.span_name == \"llm_request\")\n  |> filter(fn: (r) => contains(value: r.client_name, set: ${client:json}))\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 1m, fn: (column, tables=<-) => tables |> quantile(q: 0.50, column: column), createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        },
+        {
+          "refId": "B",
+          "query": "import \"experimental\"\nfrom(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"claude_code_traces\" and r._field == \"ttft_ms\" and r.span_name == \"llm_request\")\n  |> filter(fn: (r) => contains(value: r.client_name, set: ${client:json}))\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: 1m, fn: (column, tables=<-) => tables |> quantile(q: 0.95, column: column), createEmpty: false)",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "displayName": "${__field.labels.target_model_family}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "${__field.labels.target_model_family} p50"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "${__field.labels.target_model_family} p95"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ],
+          "width": 360
+        }
+      }
+    }
+  ],
+  "__inputs": [
+    {
+      "name": "DS_INFLUXDB",
+      "label": "InfluxDB",
+      "description": "InfluxDB datasource containing the adapter's exported metrics. Default org/bucket: see observability/README.md.",
+      "type": "datasource",
+      "pluginId": "influxdb",
+      "pluginName": "InfluxDB"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "datasource",
+      "id": "influxdb",
+      "name": "InfluxDB",
+      "version": "1.0.0"
+    },
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    }
+  ],
+  "id": null
+}
