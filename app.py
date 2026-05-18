@@ -785,6 +785,17 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
     stripped = _strip_unsupported_features_for_upstream(out, out.get("model", ""))
     cache_metric["features_stripped"] = stripped
 
+    # Alias tool names that exceed Bedrock's 64-char ``toolSpec.name`` cap
+    # for non-Anthropic upstreams. The returned map (``{alias: original}``)
+    # is plumbed to the response translators so the client sees its own
+    # tool names round-tripped on ``tool_use`` blocks.
+    cache_metric["tool_name_aliases"] = _alias_long_tool_names(out, out.get("model", ""))
+
+    # Clamp Claude Code's 32k ``max_tokens`` reservation when input crowds the
+    # upstream's context window — prevents Bedrock 400 "maximum context length"
+    # on long agentic-loop sessions against Qwen-on-Bedrock (131k cap).
+    _clamp_max_tokens_to_fit_context(out, cache_metric)
+
     return out, cache_metric
 
 
@@ -794,12 +805,21 @@ def anthropic_to_openai(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
 
 
 def openai_to_anthropic_response(
-    upstream: dict[str, Any], requested_model: str
+    upstream: dict[str, Any],
+    requested_model: str,
+    *,
+    tool_name_aliases: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Build an Anthropic Messages response from a non-streaming OpenAI body.
     Returns (anthropic_body, tool_calls_by_name) — the second tuple element
     powers the dashboard's per-tool success-rate panel.
+
+    ``tool_name_aliases`` (alias → original) reverse-maps tool names that were
+    shortened on the request side to fit Bedrock's 64-char ``toolSpec.name``
+    cap. ``tool_calls_by_name`` is keyed by the **original** name so the
+    dashboard isn't fragmented by aliasing.
     """
+    aliases = tool_name_aliases or {}
     choice = (upstream.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     finish = choice.get("finish_reason") or "stop"
@@ -822,6 +842,9 @@ def openai_to_anthropic_response(
             tool_input = {}
         raw_name = fn.get("name")
         tname = raw_name if isinstance(raw_name, str) else ""
+        # Reverse-map a Bedrock-shortened alias back to the client's original
+        # tool name (passthrough when no alias was applied).
+        tname = aliases.get(tname, tname)
         tool_calls_by_name[tname] = tool_calls_by_name.get(tname, 0) + 1
         raw_id = tc.get("id")
         tool_id = raw_id if isinstance(raw_id, str) and raw_id else (
@@ -892,10 +915,17 @@ async def stream_openai_to_anthropic(
     trace: dict[str, Any],
     estimated_input_tokens: int = 0,
     force_model_override: str | None = None,
+    tool_name_aliases: dict[str, str] | None = None,
 ) -> None:
     """Read OpenAI SSE chunks from `upstream_resp`, emit Anthropic events into
     `response`. Tracks event counts in `trace` for the success-criteria metric.
+
+    ``tool_name_aliases`` (alias → original) reverse-maps tool names that the
+    request-side aliasing shortened to fit Bedrock's 64-char ``toolSpec.name``
+    cap. Streaming emits the original name in ``content_block_start.name`` so
+    the client never sees the alias.
     """
+    aliases = tool_name_aliases or {}
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
     started = False
     text_open = False
@@ -1025,6 +1055,8 @@ async def stream_openai_to_anthropic(
                 open_tool_oai_indices.add(oai_idx)
                 raw_name = fn.get("name")
                 tname = raw_name if isinstance(raw_name, str) else ""
+                # Reverse-map a Bedrock-shortened alias back to the original.
+                tname = aliases.get(tname, tname)
                 tool_calls_by_name[tname] = tool_calls_by_name.get(tname, 0) + 1
                 raw_id = tc.get("id")
                 tool_id = raw_id if isinstance(raw_id, str) and raw_id else (
@@ -1150,18 +1182,92 @@ async def health(_r: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
-async def count_tokens_stub(_r: web.Request) -> web.Response:
+# Empirical conservative-pad factor applied to the chars/4 estimate.
+# Measured against Bedrock's reported actual input_tokens on the OSS
+# bake-off-winner deployments (qwen/kimi/minimax) for prompt shapes
+# Claude Code emits: chars/4 consistently undercounts by 1-5%. Padding
+# 10% (×1.10) puts the reported count safely above the actual upstream
+# count, so when Claude Code uses this number to decide whether to
+# auto-compact it errs toward compacting too early rather than too
+# late — which is strictly preferable to today's "blast through and
+# hope for the best" behavior caused by the previous 501 stub.
+#
+# A future improvement would be a real per-model tokenizer (or just
+# vendoring cl100k_base.tiktoken so tiktoken works offline). Until then
+# this heuristic is both simpler and good enough — count_tokens feeds
+# compaction-trigger math, not exact budget calculations.
+_COUNT_TOKENS_PAD_FACTOR = 1.10
+
+
+def _count_tokens_for_anthropic_body(body: dict[str, Any]) -> int:
+    """Count input tokens for an Anthropic-shape /v1/messages body.
+
+    chars/4 over a stable serialization of system + messages + tools +
+    tool_choice, padded ``_COUNT_TOKENS_PAD_FACTOR`` on the high side.
+    Same approach as the internal ``_estimate_request_input_tokens``
+    but operating on the *Anthropic-shape* body (pre-translation)
+    rather than the OpenAI-shape body (post-translation). Keeps the
+    two paths intentionally independent so each can evolve.
+    """
+    parts: list[str] = []
+    sysv = body.get("system")
+    if isinstance(sysv, str):
+        parts.append(sysv)
+    elif isinstance(sysv, list):
+        parts.append(json.dumps(sysv, separators=(",", ":"), default=str))
+    for key in ("messages", "tools", "tool_choice"):
+        v = body.get(key)
+        if v is None:
+            continue
+        parts.append(
+            v if isinstance(v, str) else json.dumps(v, separators=(",", ":"), default=str)
+        )
+    blob = "".join(parts)
+    raw = len(blob) // 4
+    return int(raw * _COUNT_TOKENS_PAD_FACTOR)
+
+
+async def count_tokens(request: web.Request) -> web.Response:
+    """``POST /v1/messages/count_tokens`` — Anthropic-shape input-token count.
+
+    Claude Code calls this before sending a real /v1/messages request so it
+    can decide whether to auto-compact. Prior to this implementation the
+    adapter returned 501 and Claude Code blasted ahead blind, causing
+    Bedrock-side context-overflow 400s on long agentic-loop sessions.
+
+    Uses tiktoken's ``cl100k_base`` encoder (GPT-4 BPE) as a stable BPE
+    approximation across the bake-off-winner OSS upstreams (qwen/kimi/
+    minimax) plus all Anthropic deployments. Padded 5% on the high side
+    so the client errs toward compacting too early rather than too late.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.Response(
+            status=400,
+            body=json.dumps({
+                "type": "error",
+                "error": {"type": "invalid_request_error", "message": "invalid JSON body"},
+            }).encode(),
+            content_type="application/json",
+        )
+    if not isinstance(body, dict):
+        return web.Response(
+            status=400,
+            body=json.dumps({
+                "type": "error",
+                "error": {"type": "invalid_request_error", "message": "body must be an object"},
+            }).encode(),
+            content_type="application/json",
+        )
+    n = _count_tokens_for_anthropic_body(body)
     return web.Response(
-        status=501,
-        body=json.dumps({
-            "type": "error",
-            "error": {
-                "type": "not_implemented",
-                "message": "count_tokens is not supported by the adapter.",
-            },
-        }).encode(),
+        body=json.dumps({"input_tokens": int(n)}).encode(),
         content_type="application/json",
-        headers={"x-anthropic-dial-adapter-reason": "count_tokens_not_implemented"},
+        headers={
+            "x-anthropic-dial-adapter-count-method": "chars_div_4_padded",
+            "x-anthropic-dial-adapter-count-pad-factor": str(_COUNT_TOKENS_PAD_FACTOR),
+        },
     )
 
 
@@ -1297,6 +1403,201 @@ def _strip_unsupported_features_for_upstream(
                     stripped.append(field)
             return stripped
     return []
+
+
+_BEDROCK_TOOL_NAME_MAX = 64
+
+
+def _build_tool_name_alias(name: str, max_len: int = _BEDROCK_TOOL_NAME_MAX) -> str:
+    """Return a deterministic <=``max_len``-char alias for a long tool name.
+
+    Aliases keep an ``mcp__<server>__…`` shape where possible so downstream
+    log scraping (and the operator's eye) can still tell MCP-routed tools from
+    native ones at a glance. The 6-hex SHA-1 suffix guarantees stable mapping
+    even if two long names share a long prefix.
+
+    SHA-1 is used only as a non-cryptographic hash for deterministic
+    truncation; not for any security property (noqa: S324).
+    """
+    if len(name) <= max_len:
+        return name
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:6]  # noqa: S324
+    suffix = f"__{digest}"
+    # Leave room for the digest suffix; truncate the original name to fit.
+    head = name[: max_len - len(suffix)]
+    return f"{head}{suffix}"
+
+
+def _alias_long_tool_names(
+    openai_body: dict[str, Any],
+    target_model: str,
+    *,
+    max_len: int = _BEDROCK_TOOL_NAME_MAX,
+) -> dict[str, str]:
+    """Rewrite long tool names in ``openai_body`` for Bedrock-backed upstreams.
+
+    Mutates ``openai_body["tools"][i]["function"]["name"]`` and any historical
+    ``messages[].tool_calls[].function.name`` references in place. Returns a
+    mapping ``{alias: original_name}`` that callers stash and pass to the
+    response-translation helpers to reverse-map ``tool_use[].name`` back to
+    what the client originally declared.
+
+    Aliasing is skipped entirely for Anthropic upstreams — including
+    ``global.anthropic.*`` cross-region inference IDs — (Anthropic does not
+    enforce Bedrock's 64-char ``toolSpec.name`` limit) and for empty bodies.
+    """
+    if not target_model:
+        return {}
+    if target_model.startswith(("anthropic.", "global.anthropic.")):
+        return {}
+
+    aliases: dict[str, str] = {}
+    rev: dict[str, str] = {}  # original → alias, for in-pass rewrite
+
+    tools_out = openai_body.get("tools")
+    if isinstance(tools_out, list):
+        for entry in tools_out:
+            if not isinstance(entry, dict):
+                continue
+            fn = entry.get("function")
+            if not isinstance(fn, dict):
+                continue
+            raw = fn.get("name")
+            if not isinstance(raw, str) or len(raw) <= max_len:
+                continue
+            alias = rev.get(raw) or _build_tool_name_alias(raw, max_len=max_len)
+            # Disambiguate the extremely unlikely 24-bit hash collision with a
+            # second rewrite. We trust the recorded reverse map (``rev``) so a
+            # name that has already been aliased always re-maps the same way.
+            collision_seed = 1
+            while alias in aliases and aliases[alias] != raw:
+                alias = _build_tool_name_alias(f"{raw}#{collision_seed}", max_len=max_len)
+                collision_seed += 1
+            aliases[alias] = raw
+            rev[raw] = alias
+            fn["name"] = alias
+
+    # Apply to assistant tool_calls in message history so a re-played
+    # tool_call refers to the same alias the upstream is going to echo back.
+    messages = openai_body.get("messages")
+    if isinstance(messages, list) and rev:
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            calls = msg.get("tool_calls")
+            if not isinstance(calls, list):
+                continue
+            for call in calls:
+                if not isinstance(call, dict):
+                    continue
+                cfn = call.get("function")
+                if not isinstance(cfn, dict):
+                    continue
+                cname = cfn.get("name")
+                if isinstance(cname, str) and cname in rev:
+                    cfn["name"] = rev[cname]
+
+    # tool_choice may pin a specific tool by name; alias that too.
+    tc = openai_body.get("tool_choice")
+    if isinstance(tc, dict):
+        tc_fn = tc.get("function")
+        if isinstance(tc_fn, dict):
+            tc_name = tc_fn.get("name")
+            if isinstance(tc_name, str) and tc_name in rev:
+                tc_fn["name"] = rev[tc_name]
+
+    return aliases
+
+
+# Approximate maximum context window (input + output) per upstream model prefix
+# or exact id, in tokens. Used by ``_clamp_max_tokens_to_fit_context`` to trim
+# Claude Code's 32k ``max_tokens`` reservation down to whatever the remaining
+# budget allows. Empirical values from the Bedrock/DIAL probes documented in
+# 06_Investigations/2026-05-15-multi-model-classifier-decoupling.md. Errs
+# conservative — a 1k safety margin is taken on top of whatever value is here.
+_MODEL_MAX_CONTEXT: dict[str, int] = {
+    "qwen.qwen3-coder-480b-a35b-v1:0": 131_072,
+    "qwen.qwen3-235b-a22b-2507-v1:0": 131_072,
+    "qwen.": 131_072,  # prefix fallback for any other qwen.* deployment
+    "moonshotai.kimi-k2.5": 128_000,
+    "moonshotai.": 128_000,
+    "minimax.minimax-m2.5": 245_760,  # MiniMax M2.5 advertises 256k; -10k safety
+    "minimax.": 200_000,
+    "deepseek.": 65_536,
+    "google.gemma-3-27b-it": 8_192,
+    "google.": 8_192,
+}
+_CONTEXT_SAFETY_MARGIN_TOKENS = 4096
+_MIN_OUTPUT_TOKENS_FLOOR = 1024  # never clamp below this — would defeat the request
+
+
+def _model_max_context_tokens(model: str) -> int | None:
+    """Return the configured max-context-window for ``model`` or ``None`` if unknown."""
+    m = (model or "").strip().lower()
+    if not m:
+        return None
+    if m in _MODEL_MAX_CONTEXT:
+        return _MODEL_MAX_CONTEXT[m]
+    for prefix, ctx in _MODEL_MAX_CONTEXT.items():
+        if prefix.endswith(".") and m.startswith(prefix):
+            return ctx
+    return None
+
+
+def _estimate_request_input_tokens(openai_body: dict[str, Any]) -> int:
+    """Rough char/4 heuristic over the OUTBOUND OpenAI body.
+
+    Includes messages, system content embedded in messages, tools (schemas can
+    be huge — Claude Code sends ~32 of them), and tool_choice. Conservative —
+    a slight overestimate is preferable to under-counting and tripping the
+    real upstream limit.
+    """
+    parts: list[str] = []
+    for key in ("messages", "tools", "tool_choice"):
+        val = openai_body.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str):
+            parts.append(val)
+        else:
+            parts.append(json.dumps(val, separators=(",", ":"), default=str))
+    return max(0, sum(len(p) for p in parts) // 4)
+
+
+def _clamp_max_tokens_to_fit_context(
+    openai_body: dict[str, Any],
+    cache_metric: dict[str, Any],
+) -> None:
+    """Trim ``max_tokens`` so input + output fits the upstream's context window.
+
+    Mutates ``openai_body`` in-place. Records the clamp on ``cache_metric``
+    under ``max_tokens_clamp`` so the request_in log shows when it fires.
+
+    Without this, Claude Code's hardcoded 32k output reservation collides with
+    Qwen-on-Bedrock's 131k cap on any conversation past ~99k input tokens,
+    yielding a Bedrock 400 "maximum context length" that the user sees as
+    `API Error: 400 upstream returned 400` mid-agentic-loop.
+    """
+    model = str(openai_body.get("model") or "")
+    max_ctx = _model_max_context_tokens(model)
+    if max_ctx is None:
+        return  # unknown model — leave alone, let upstream enforce
+    requested_out = openai_body.get("max_tokens")
+    if not isinstance(requested_out, int) or requested_out <= 0:
+        return
+    estimated_in = _estimate_request_input_tokens(openai_body)
+    budget = max_ctx - estimated_in - _CONTEXT_SAFETY_MARGIN_TOKENS
+    if budget >= requested_out:
+        return  # plenty of room — no clamp
+    clamped = max(_MIN_OUTPUT_TOKENS_FLOOR, budget)
+    openai_body["max_tokens"] = clamped
+    cache_metric["max_tokens_clamp"] = {
+        "original": requested_out,
+        "clamped": clamped,
+        "estimated_input_tokens": estimated_in,
+        "max_context": max_ctx,
+        "model": model,
+    }
 
 
 def _filter_model_ids_for_advertise(ids: Sequence[str]) -> list[str]:
@@ -1852,6 +2153,8 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
          tools_mcp_count=cache_metric.get("tools_mcp_count", 0),
          tools_other_count=cache_metric.get("tools_other_count", 0),
          mcp_servers_seen=cache_metric.get("mcp_servers_seen") or [],
+         # max_tokens auto-clamp when input crowds the context window
+         max_tokens_clamp=cache_metric.get("max_tokens_clamp"),
          **_mt)
 
     session: aiohttp.ClientSession = request.app["client_session"]
@@ -1927,7 +2230,9 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
                 status=502,
             )
         anthropic_body, tool_calls_by_name = openai_to_anthropic_response(
-            upstream_json, client_view_model
+            upstream_json,
+            client_view_model,
+            tool_name_aliases=cache_metric.get("tool_name_aliases"),
         )
         # When alias was applied, force the response.model to the client-view
         # name regardless of what upstream returned. openai_to_anthropic_response
@@ -1981,6 +2286,7 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
             # to the client-view name (overrides whatever the upstream
             # alias target reported).
             force_model_override=client_view_model if alias_active else None,
+            tool_name_aliases=cache_metric.get("tool_name_aliases"),
         )
     except Exception as e:
         stream_exc = e
@@ -2556,7 +2862,7 @@ def build_app() -> web.Application:
     app.router.add_get("/health", health)
     app.router.add_get("/v1/models", models)
     app.router.add_post("/v1/messages", messages)
-    app.router.add_post("/v1/messages/count_tokens", count_tokens_stub)
+    app.router.add_post("/v1/messages/count_tokens", count_tokens)
     # OpenAI-shape sibling routes for Cursor, Zed, Continue, Aider,
     # Goose, JetBrains AI. Multi-client governance story.
     app.router.add_post("/v1/chat/completions", chat_completions)
