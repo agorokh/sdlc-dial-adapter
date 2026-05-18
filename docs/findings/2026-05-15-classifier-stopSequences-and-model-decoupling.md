@@ -61,5 +61,5 @@ Plus a `.claude/settings.json` `permissions.allow` allowlist for read-only Bash,
 
 ## Follow-ups (not in this PR)
 
-- **64-char tool-name aliasing.** Bedrock Converse rejects `toolSpec.name` > 64 chars. MCP tool names from third-party plugins can easily exceed this (`mcp__plugin_deploy-on-aws_awsknowledge__aws___get_regional_availability` is 71 chars). The dial-sandbox internal fork has this fix shipped (`agorokh/dial-sandbox@0267363`); cherry-pick is queued for this repo separately.
+- **64-char tool-name aliasing.** Bedrock Converse rejects `toolSpec.name` > 64 chars. MCP tool names from third-party plugins can easily exceed this (`mcp__plugin_deploy-on-aws_awsknowledge__aws___get_regional_availability` is 71 chars). Shipped in this adapter as part of PR #3 — see [`docs/findings/2026-05-16-bedrock-context-and-tokens-hardening.md`](2026-05-16-bedrock-context-and-tokens-hardening.md) for the full implementation.
 - **`autoMode.model` settings key.** If/when Claude Code exposes a way to route the classifier to a different model, validate the cloud-Claude-Code-style decoupling.

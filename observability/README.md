@@ -47,7 +47,7 @@ The adapter never speaks to InfluxDB or Grafana directly. It writes one structur
 2. **Run the exporter daemon** (tails the same log path via env):
    ```bash
    export INFLUX_URL=http://localhost:8086
-   export INFLUX_ORG=dial-sandbox
+   export INFLUX_ORG=<your-org>
    export INFLUX_BUCKET=dial-metrics
    export INFLUX_TOKEN=<your-token>
    # Or use INFLUXDB_URL / INFLUXDB_ORG / INFLUXDB_BUCKET / INFLUXDB_TOKEN (aliases).

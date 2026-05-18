@@ -105,9 +105,16 @@ single-user loopback deployment against EPAM DIAL.
 
 Proof of concept extracted from a larger internal evaluation
 (192 trials of Claude Code 2.1 across eight upstream models routed
-through DIAL). The translation core is stable; the operational
-sidecars (observability, telemetry exporters) live in the parent
-sandbox and are out of scope for this repo.
+through DIAL). The translation core is stable.
+
+The repo also ships an optional observability bundle under
+[`observability/`](observability/) — Grafana dashboards plus a
+reference InfluxDB exporter — so adopters who want a working
+metrics-and-dashboards pipeline can stand one up in minutes.
+Adopters using their own observability stack should read
+[`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md) —
+it's the vendor-neutral contract documenting the JSON events the
+adapter emits to stdout.
 
 ## License
 

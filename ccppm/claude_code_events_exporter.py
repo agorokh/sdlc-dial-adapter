@@ -526,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     influx_url = _env("INFLUX_URL", "INFLUXDB_URL", default="http://influxdb:8086")
-    org = _env("INFLUX_ORG", "INFLUXDB_ORG", default="dial-sandbox")
+    org = _env("INFLUX_ORG", "INFLUXDB_ORG", default="default")
     bucket = _validate_influx_bucket(_env("INFLUX_BUCKET", "INFLUXDB_BUCKET", default="dial-metrics"))
     token = _env("INFLUX_TOKEN", "INFLUXDB_TOKEN")
     if not token:
