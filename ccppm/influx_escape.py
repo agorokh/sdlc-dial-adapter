@@ -16,4 +16,9 @@ def influx_escape_tag(s: str) -> str:
 
 
 def influx_escape_string_field(s: str) -> str:
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )

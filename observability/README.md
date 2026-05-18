@@ -6,11 +6,11 @@ This directory ships a reference observability stack for the adapter. Everything
 
 | File | Purpose |
 |---|---|
-| `EVENT_SCHEMA.md` | **The contract.** What JSON events the adapter emits on stdout, what fields each carries, and which fields are safe to use as metric labels vs. high-cardinality. **Start here** if you're wiring your own pipeline. |
+| `EVENT_SCHEMA.md` | **The contract.** What JSON events the adapter emits, what fields each carries, and which fields are safe to use as metric labels vs. high-cardinality. **Start here** if you're wiring your own pipeline. |
 | `grafana/dial-bridge-overview.json` | Grafana dashboard: *Claude Code — Anthropic vs DIAL routing comparison*. Side-by-side panels for request/error/latency/token-usage on Anthropic-on-DIAL vs OSS-on-DIAL deployments. The business-logic dashboard. |
-| `grafana/dial-overview.json` | Grafana dashboard: *DIAL Sandbox Overview*. Adapter-level health: error rates, capability-strip activity, tool drift, cache_control strategy distribution. |
-| `../ccppm/exporter.py` | InfluxDB exporter daemon. Tails the adapter's stdout JSON stream, computes rolling metrics, writes InfluxDB line protocol. |
-| `../ccppm/claude_code_events_exporter.py` | Companion exporter that pushes Claude Code's own internal event stream (when telemetry is enabled). |
+| `grafana/dial-overview.json` | Grafana dashboard: *Adapter metrics overview*. Rolling CCPPM metrics from `ccppm/exporter.py` (`adapter_metrics` measurement). |
+| `../ccppm/exporter.py` | InfluxDB exporter daemon. Tails the adapter GFLog file(s), computes rolling metrics, writes InfluxDB line protocol. |
+| `../ccppm/claude_code_events_exporter.py` | Optional sidecar: restructures Claude Code OTel events already in Influx (`logs` measurement) into queryable `claude_code_events` records. |
 | `../ccppm/metrics_from_log.py` | Pure computation module: given a window of JSON event lines, produce a metrics dict. Used by the exporter daemon and also unit-testable. |
 
 ## Architectural model
@@ -18,11 +18,11 @@ This directory ships a reference observability stack for the adapter. Everything
 ```
                                         ┌──────────────────────┐
    Claude Code  ──HTTP──>  adapter  ──┬──>  upstream (DIAL)    │
-                  (stdout JSON event)  │                       │
+                  (GFLog JSON events)  │                       │
                                        │                        │
                                        v                        │
                               ccppm/exporter.py                  │
-                              (tail JSON events)                 │
+                              (tail log file)                    │
                                        │                        │
                                        v                        │
                                   InfluxDB                       │
@@ -34,24 +34,26 @@ This directory ships a reference observability stack for the adapter. Everything
                                   Operator / SRE                 │
 ```
 
-The adapter never speaks to InfluxDB or Grafana directly. It writes one structured JSON line per event to stdout. The exporter daemon is what makes those events readable as metrics; the dashboards are what makes them readable as a story.
+The adapter never speaks to InfluxDB or Grafana directly. It writes one structured JSON line per event to **`ANTHROPIC_DIAL_ADAPTER_LOG`** (default `/var/log/anthropic-dial-adapter/adapter.log`) and mirrors a short prefixed line to **stderr** for `docker logs`. The exporter daemon tails the log file and writes metrics; the dashboards visualize them.
 
 ## Quick start (reference stack — InfluxDB + Grafana)
 
-1. **Capture adapter stdout** to a log file or directly to a pipe.
+1. **Run the adapter** with a writable log path (default works in Docker when `/var/log/anthropic-dial-adapter` exists):
    ```bash
-   python app.py 2>&1 | tee /var/log/adapter.jsonl
+   export ANTHROPIC_DIAL_ADAPTER_LOG=/var/log/anthropic-dial-adapter/adapter.log
+   python app.py
    ```
 
-2. **Run the exporter daemon** pointing at that log:
+2. **Run the exporter daemon** (tails the same log path via env):
    ```bash
-   export INFLUXDB_URL=http://localhost:8086
-   export INFLUXDB_ORG=<your-org>
-   export INFLUXDB_BUCKET=dial-bridge
-   export INFLUXDB_TOKEN=<your-token>
-   python -m ccppm.exporter --log /var/log/adapter.jsonl
+   export INFLUX_URL=http://localhost:8086
+   export INFLUX_ORG=dial-sandbox
+   export INFLUX_BUCKET=dial-metrics
+   export INFLUX_TOKEN=<your-token>
+   export ANTHROPIC_DIAL_ADAPTER_LOG=/var/log/anthropic-dial-adapter/adapter.log
+   python -m ccppm.exporter --once   # or omit --once for the 30s loop
    ```
-   The exporter tails the file and writes InfluxDB line protocol. See `ccppm/exporter.py` for the full env var contract.
+   See `ccppm/exporter.py` for the full env var contract (`ADAPTER_LOG_DIR`, `ADAPTER_LOG_FILES`, `ADAPTER_METRICS_WINDOW_MINUTES`, healthcheck knobs, etc.).
 
 3. **Import the Grafana dashboards.** In Grafana, *Dashboards → Import*, upload the JSON files in `grafana/`. When prompted, select your InfluxDB datasource (the dashboards reference it as `${DS_INFLUXDB}` and Grafana's Import UI will ask you to map it).
 
@@ -59,8 +61,8 @@ The adapter never speaks to InfluxDB or Grafana directly. It writes one structur
 
 The reference stack uses InfluxDB because that's what we run in our development sandbox. **Your stack can be anything.** Read `EVENT_SCHEMA.md` for the field contract and wire up whichever pipeline you prefer:
 
-- **OpenTelemetry Collector**: tail stdout with the [`filelog` receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/filelogreceiver), parse with the JSON operator, route to a [logs / metrics / traces pipeline](https://opentelemetry.io/docs/collector/configuration/) of your choice.
-- **Prometheus + Loki**: ship logs to Loki, run a `count_over_time` rate; for actual histograms, use Vector to transform stdout JSON into Prometheus exposition format and scrape it.
+- **OpenTelemetry Collector**: tail the log file with the [`filelog` receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/filelogreceiver), parse with the JSON operator, route to a [logs / metrics / traces pipeline](https://opentelemetry.io/docs/collector/configuration/) of your choice.
+- **Prometheus + Loki**: ship logs to Loki, run a `count_over_time` rate; for actual histograms, use Vector to transform GFLog JSON into Prometheus exposition format and scrape it.
 - **Datadog**: their [agent](https://docs.datadoghq.com/logs/log_collection/) tails JSON natively; map `event`, `target_model_family`, `client_name` to Datadog facets.
 - **Custom**: any tail-and-parse pipeline works. The events are pure newline-delimited JSON.
 

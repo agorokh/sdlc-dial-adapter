@@ -18,7 +18,7 @@
       },
       "id": 1,
       "options": {
-        "content": "# DIAL Sandbox — analytics overview\n\nData is written by **DIAL Analytics Realtime** from DIAL Core GFLog lines (via Vector). Send a few **Chat** requests, wait ~1 minute, then refresh. See vault **Grafana and Analytics** for customization.\n\n**Inter-request gap** panels estimate spacing between logged `prompt_tokens` points (a practical proxy until you add trace-derived latency series).",
+        "content": "# Adapter metrics overview\n\nPanels read measurement **`adapter_metrics`** written by `ccppm/exporter.py` (see `observability/README.md`). Send traffic through the adapter, run the exporter on a 30s interval, then refresh.\n\nFor Claude Code vs DIAL routing comparison, import **`dial-bridge-overview.json`** instead.",
         "mode": "markdown"
       },
       "title": "",
@@ -35,20 +35,26 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
               },
               {
-                "color": "red",
-                "value": 80
+                "color": "yellow",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.98
               }
             ]
           },
-          "unit": "none"
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -79,11 +85,11 @@
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
           },
-          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"analytics\")\n  |> filter(fn: (r) => r._field == \"prompt_tokens\")\n  |> group()\n  |> count()",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"sse_event_emission_ratio_mean\")\n  |> group()\n  |> last()",
           "refId": "A"
         }
       ],
-      "title": "Chat requests (count)",
+      "title": "SSE emission ratio (latest)",
       "type": "stat"
     },
     {
@@ -107,7 +113,7 @@
             "showPoints": "never"
           },
           "mappings": [],
-          "unit": "none"
+          "unit": "ms"
         },
         "overrides": []
       },
@@ -130,11 +136,11 @@
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
           },
-          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"analytics\")\n  |> filter(fn: (r) => r._field == \"prompt_tokens\")\n  |> group()\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: false)\n  |> yield(name: \"requests\")",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"end_to_end_p95_ms\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> group(columns: [\"target_model_family\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
           "refId": "A"
         }
       ],
-      "title": "Request volume (per window)",
+      "title": "End-to-end p95 latency by family",
       "type": "timeseries"
     },
     {
@@ -177,11 +183,11 @@
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
           },
-          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"analytics\")\n  |> filter(fn: (r) => r._field == \"prompt_tokens\" or r._field == \"completion_tokens\")\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: sum, createEmpty: false)\n  |> yield(name: \"tokens\")",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\")\n  |> filter(fn: (r) => r._field == \"input_tokens_total\" or r._field == \"output_tokens_total\")\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
           "refId": "A"
         }
       ],
-      "title": "Token usage (prompt + completion)",
+      "title": "Token totals (rolling window mean)",
       "type": "timeseries"
     },
     {
@@ -223,7 +229,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "Requests"
+            "displayName": "Input tokens"
           }
         ]
       },
@@ -233,11 +239,11 @@
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
           },
-          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"analytics\")\n  |> filter(fn: (r) => r._field == \"prompt_tokens\")\n  |> group(columns: [\"model\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"input_tokens_total\")\n  |> filter(fn: (r) => r.target_model_family != \"none\" and r.target_model_family != \"unknown\")\n  |> group(columns: [\"target_model_family\"])\n  |> last()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)",
           "refId": "A"
         }
       ],
-      "title": "Model comparison",
+      "title": "Input tokens by family (latest window)",
       "transformations": [
         {
           "id": "organize",
@@ -247,8 +253,8 @@
               "_stop": true
             },
             "renameByName": {
-              "_value": "Requests",
-              "model": "Model"
+              "_value": "Input tokens",
+              "target_model_family": "Family"
             }
           }
         }
@@ -266,6 +272,8 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -275,15 +283,15 @@
               },
               {
                 "color": "yellow",
-                "value": 5000
+                "value": 0.05
               },
               {
                 "color": "red",
-                "value": 30000
+                "value": 0.2
               }
             ]
           },
-          "unit": "ms"
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -314,11 +322,11 @@
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
           },
-          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"analytics\" and r._field == \"prompt_tokens\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> elapsed(unit: 1ms)\n  |> filter(fn: (r) => exists r.elapsed)\n  |> map(fn: (r) => ({ r with _value: float(v: r.elapsed) }))\n  |> mean(column: \"_value\")",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"partial_message_error_rate\")\n  |> group()\n  |> last()",
           "refId": "A"
         }
       ],
-      "title": "Mean inter-request gap (ms)",
+      "title": "Partial message error rate (latest)",
       "type": "stat"
     },
     {
@@ -341,7 +349,9 @@
             "lineWidth": 2,
             "showPoints": "never"
           },
-          "unit": "ms"
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -364,11 +374,11 @@
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
           },
-          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"analytics\" and r._field == \"prompt_tokens\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> elapsed(unit: 1ms)\n  |> filter(fn: (r) => exists r.elapsed)\n  |> map(fn: (r) => ({ r with _value: float(v: r.elapsed) }))\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"gap\")",
+          "query": "from(bucket: \"dial-metrics\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"adapter_metrics\" and r._field == \"tool_use_round_trip_success_rate\")\n  |> group()\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)",
           "refId": "A"
         }
       ],
-      "title": "Inter-request gap (mean per window, ms)",
+      "title": "Tool-use round-trip success rate",
       "type": "timeseries"
     }
   ],
@@ -377,8 +387,8 @@
   "style": "dark",
   "tags": [
     "dial",
-    "sandbox",
-    "analytics"
+    "adapter",
+    "ccppm"
   ],
   "templating": {
     "list": []
@@ -389,7 +399,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "DIAL Sandbox Overview",
+  "title": "Adapter metrics overview",
   "uid": null,
   "version": 1,
   "weekStart": "",
@@ -397,7 +407,7 @@
     {
       "name": "DS_INFLUXDB",
       "label": "InfluxDB",
-      "description": "InfluxDB datasource containing the adapter's exported metrics. Default org/bucket: see observability/README.md.",
+      "description": "InfluxDB datasource containing adapter_metrics from ccppm/exporter.py. Default org/bucket: see observability/README.md.",
       "type": "datasource",
       "pluginId": "influxdb",
       "pluginName": "InfluxDB"

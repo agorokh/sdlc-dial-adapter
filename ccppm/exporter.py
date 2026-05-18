@@ -245,8 +245,11 @@ def run_healthcheck(log_paths: list[Path]) -> int:
 
 
 def _log_paths_from_env() -> list[Path]:
-    base = Path(os.environ.get("ADAPTER_LOG_DIR", "/var/lib/anthropic-dial-adapter-log"))
-    files = os.environ.get("ADAPTER_LOG_FILES", "adapter.log,adapter-qwen.log")
+    log_path = os.environ.get("ANTHROPIC_DIAL_ADAPTER_LOG", "").strip()
+    if log_path:
+        return [Path(log_path)]
+    base = Path(os.environ.get("ADAPTER_LOG_DIR", "/var/log/anthropic-dial-adapter"))
+    files = os.environ.get("ADAPTER_LOG_FILES", "adapter.log")
     return [base / name.strip() for name in files.split(",") if name.strip()]
 
 

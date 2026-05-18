@@ -1,12 +1,12 @@
 # Event schema
 
-The adapter emits structured JSON events to stdout. Each line is one event. This document is the **contract**: every field listed here is supported across releases; anything not listed is internal and may change.
+The adapter emits structured JSON events to **`ANTHROPIC_DIAL_ADAPTER_LOG`** (default `/var/log/anthropic-dial-adapter/adapter.log`) and mirrors each line to **stderr** with a `[anthropic-dial-adapter]` prefix. Each line is one event. This document is the **contract**: every field listed here is supported across releases; anything not listed is internal and may change.
 
-If you're building your own OTEL/Prometheus/Datadog pipeline against this adapter, use the field list below as your starting point. The reference InfluxDB exporter at `ccppm/claude_code_events_exporter.py` shows one mapping; your pipeline can be different.
+If you're building your own OTEL/Prometheus/Datadog pipeline against this adapter, use the field list below as your starting point. The reference InfluxDB exporter at `ccppm/exporter.py` (with `ccppm/metrics_from_log.py`) shows one mapping for adapter GFLog events; `ccppm/claude_code_events_exporter.py` is a separate optional sidecar for Claude Code OTel events already stored in Influx.
 
 ## Envelope (every event)
 
-Each line emitted to stdout has this skeleton:
+Each log line has this skeleton:
 
 ```json
 {
@@ -86,10 +86,17 @@ Emitted after a successful upstream response.
 | `status` | int | HTTP status returned to client |
 | `elapsed_ms` | int | wall time from request_in to first byte of response |
 | `stop_reason` | str | Anthropic-shape stop_reason (`end_turn`, `tool_use`, `max_tokens`, ...) |
+| `final_stop_reason` | str | stop reason after stream normalization (may differ when stream truncated) |
 | `input_tokens` | int | reported by upstream |
 | `output_tokens` | int | reported by upstream |
 | `cache_read_input_tokens` | int | upstream-reported cache-hit tokens |
 | `cache_creation_input_tokens` | int | upstream-reported cache-miss tokens written |
+| `sse_events_consumed` | int | upstream SSE chunks read (streaming only) |
+| `sse_events_emitted` | int | Anthropic SSE events written to client (streaming only) |
+| `sse_event_emission_ratio` | float | `emitted / consumed` when streaming; used for parity metrics |
+| `stream_truncated` | bool | stream ended before a finish reason (partial response) |
+| `upstream_stream_aborted` | bool | upstream read failed mid-stream |
+| `stream_error_type` | str \| null | exception class name when `upstream_stream_aborted` |
 | `tool_calls_by_name` | dict[str,int] | per-tool invocation counts in this response. Keys are the **client's original** tool names, even if the adapter aliased them on the wire (see 64-char Bedrock fix). |
 | `cost_usd_estimate` | float | optional, present when the price table is loaded |
 | `shadow_dispatched` | bool | true when a parallel shadow request was mirrored |
@@ -102,12 +109,14 @@ Emitted on any failure path. The `reason` field discriminates between failure cl
 | Field | Type | Notes |
 |---|---|---|
 | `request_id` | str | when scoped to a single request |
-| `reason` | str | one of `invalid_model`, `translation_failed`, `upstream_connect`, `upstream_status`, `upstream_non_json`, `models_upstream_read`, `models_upstream_status`, `models_upstream_connect` |
+| `reason` | str | see stable set below; **additional values may appear** in minor releases |
 | `status` | int | when `reason == upstream_status` |
 | `body_snippet` | str | first ~300 chars of upstream body |
 | `message` | str | brief human-readable description |
 | `target_model_family` | str | when known |
 | `client_name` | str | when known |
+
+**Stable `reason` values (non-exhaustive):** `invalid_model`, `translation_failed`, `upstream_connect`, `upstream_status`, `upstream_non_json`, `upstream_stream_read`, `streaming_failed`, `partial_message`, `missing_project_key`, `models_upstream_read`, `models_upstream_status`, `models_upstream_connect`, `models_upstream_non_json`, plus shadow-path reasons (`invalid_shadow_model`, `connect_or_parse`, `shadow_non_object_json`, `shadow_summarize_failed`). Metrics pipelines should treat unknown `reason` strings as a distinct bucket rather than dropping the event.
 
 ## Cardinality notes for metrics pipelines
 
@@ -120,18 +129,20 @@ When wiring this into a metrics backend, treat these fields as **high-cardinalit
 
 These are safe label dimensions:
 
-- `event`, `reason`, `status`, `stream`, `stop_reason`
+- `event`, `reason`, `status`, `stream`, `stop_reason`, `final_stop_reason`
 - `client_name`, `target_model_family`, `cache_control_strategy`
 - `features_stripped` (sort+join before labeling)
 
 ## How the reference exporter maps this
 
-`ccppm/claude_code_events_exporter.py` tails the JSON stream and writes InfluxDB line protocol. It exists for two reasons:
+`ccppm/exporter.py` tails the GFLog file(s), runs `ccppm/metrics_from_log.compute()` over a rolling window, and writes InfluxDB line protocol to measurement `adapter_metrics` (configurable via `INFLUX_MEASUREMENT`). It exists for two reasons:
 
 1. **Reference implementation** — read the source to understand one workable mapping into a TSDB.
 2. **Local-dev fast path** — pair with the bundled Grafana dashboards for an out-of-the-box observability stack.
 
-If you're shipping this adapter into a Prometheus or OpenTelemetry environment, you don't need the InfluxDB exporter. Tail the stdout JSON yourself (e.g. via a Vector / Fluentbit / OTEL Collector pipeline) and emit your own metric/log records using this schema as the source of truth.
+`ccppm/claude_code_events_exporter.py` is optional: it restructures Claude Code OTel events from Influx measurement `logs` into `claude_code_events` when you already ingest OTel there.
+
+If you're shipping this adapter into a Prometheus or OpenTelemetry environment, you don't need the InfluxDB exporter. Tail the GFLog JSON yourself (e.g. via a Vector / Fluent Bit / OTEL Collector pipeline) and emit your own metric/log records using this schema as the source of truth.
 
 ## Compatibility
 

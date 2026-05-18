@@ -127,7 +127,7 @@ def _extract_tool_result(attrs: dict) -> tuple[dict[str, str], dict[str, Any]]:
         "event_name": "tool_result",
         "tool_name": str(attrs.get("tool_name", "unknown")),
         "client_name": str(attrs.get("client.name", "unknown")),
-        "success": "true" if attrs.get("success") else "false",
+        "success": "true" if _truthy_attr(attrs.get("success")) else "false",
         "mcp_server_scope": str(attrs.get("mcp_server_scope", "")),
         "error_type": str(attrs.get("error_type", "")),
     }

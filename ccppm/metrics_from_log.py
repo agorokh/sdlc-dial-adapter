@@ -7,7 +7,7 @@ Reads NDJSON `adapter.log` events from disk (or stdin) and emits:
   sse_event_emission_ratio        mean across streaming responses
   tool_use_round_trip_success_rate
   partial_message_error_rate
-  tool_use_id_stability           always 1.0 by adapter contract; check error tags
+  tool_use_id_stability           same follow-up heuristic as tool_use_round_trip_success_rate
   cache_control_strategy          {seen, dropped, passthrough} counts
   end_to_end_p95_latency_ms       p95 over all response_out
   cost_usd_estimate_total       sum of per-response adapter estimates (Issue #81)
