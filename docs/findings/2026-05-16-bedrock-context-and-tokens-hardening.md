@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-Running Claude Code against third-party Bedrock-hosted models (Qwen, Kimi, MiniMax, DeepSeek, etc.) via DIAL produces **five distinct 400-error classes** that all look the same from the client side (`API Error: 400 upstream returned 400`). Four of them are translation gaps; one is a hard upstream context-window limit. This adapter now handles all five so end-to-end agentic-loop sessions are stable.
+Running Claude Code against third-party Bedrock-hosted models (Qwen, Kimi, MiniMax, DeepSeek, etc.) via DIAL produces **five distinct 400-error classes** that all look the same from the client side (`API Error: 400 upstream returned 400`). Four involve adapter translation or missing features; one is a hard upstream context-window limit. This adapter now handles all five so end-to-end agentic-loop sessions are stable.
 
 ## The five failure classes
 

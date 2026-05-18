@@ -363,9 +363,16 @@ async def _probe_upstream_cache_control_support(
 class TranslationError(Exception):
     """Raised when an inbound Anthropic body cannot be translated."""
 
-    def __init__(self, message: str, *, status: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int = 400,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
+        self.detail = detail or {}
 
 
 _DEPLOYMENT_ID_RE = re.compile(r"^[A-Za-z0-9_.:\-]+$")
@@ -1186,7 +1193,7 @@ async def health(_r: web.Request) -> web.Response:
 # Measured against Bedrock's reported actual input_tokens on the OSS
 # bake-off-winner deployments (qwen/kimi/minimax) for prompt shapes
 # Claude Code emits: chars/4 consistently undercounts by 1-5%. Padding
-# 10% (×1.10) puts the reported count safely above the actual upstream
+# 10% (x1.10) puts the reported count safely above the actual upstream
 # count, so when Claude Code uses this number to decide whether to
 # auto-compact it errs toward compacting too early rather than too
 # late — which is strictly preferable to today's "blast through and
@@ -1606,7 +1613,7 @@ def _clamp_max_tokens_to_fit_context(
     Clamps to the remaining ``budget`` only — never ``max(1024, budget)``, which
     would raise ``max_tokens`` above the context window when ``budget < 1024``.
     When ``budget <= 0``, raises ``TranslationError`` (400) with
-    ``input_exceeds_context`` on the metric instead of forwarding a doomed request.
+    ``detail["input_exceeds_context"]`` so the handler can log it before responding.
     """
     model = str(openai_body.get("model") or "")
     max_ctx = _model_max_context_tokens(model)
@@ -1620,17 +1627,19 @@ def _clamp_max_tokens_to_fit_context(
     if budget >= requested_out:
         return  # plenty of room — no clamp
     if budget <= 0:
-        cache_metric["input_exceeds_context"] = {
-            "estimated_input_tokens": estimated_in,
-            "max_context": max_ctx,
-            "remaining_output_budget": budget,
-            "model": model,
-        }
         raise TranslationError(
             f"estimated input ({estimated_in} tokens) exceeds context window "
             f"for {model!r} (max {max_ctx} tokens, "
             f"{_CONTEXT_SAFETY_MARGIN_TOKENS}-token safety margin)",
             status=400,
+            detail={
+                "input_exceeds_context": {
+                    "estimated_input_tokens": estimated_in,
+                    "max_context": max_ctx,
+                    "remaining_output_budget": budget,
+                    "model": model,
+                },
+            },
         )
     clamped = budget  # never raise max_tokens above remaining budget
     openai_body["max_tokens"] = clamped
@@ -2154,7 +2163,24 @@ async def messages(request: web.Request) -> Union[web.Response, web.StreamRespon
     try:
         openai_body, cache_metric = anthropic_to_openai(body)
     except TranslationError as e:
-        emit("error", request_id=request_id, reason="translation_failed", message=str(e), **_mt)
+        ctx = e.detail.get("input_exceeds_context")
+        if ctx:
+            emit(
+                "error",
+                request_id=request_id,
+                reason="input_exceeds_context",
+                message=str(e),
+                input_exceeds_context=ctx,
+                **_mt,
+            )
+        else:
+            emit(
+                "error",
+                request_id=request_id,
+                reason="translation_failed",
+                message=str(e),
+                **_mt,
+            )
         return web.json_response(
             {"type": "error", "error": {"type": "invalid_request_error", "message": str(e)}},
             status=e.status,
