@@ -50,8 +50,9 @@ The adapter never speaks to InfluxDB or Grafana directly. It writes one structur
    export INFLUX_ORG=dial-sandbox
    export INFLUX_BUCKET=dial-metrics
    export INFLUX_TOKEN=<your-token>
-   export ANTHROPIC_DIAL_ADAPTER_LOG=/var/log/anthropic-dial-adapter/adapter.log
-   python -m ccppm.exporter --once   # or omit --once for the 30s loop
+   # Or use INFLUXDB_URL / INFLUXDB_ORG / INFLUXDB_BUCKET / INFLUXDB_TOKEN (aliases).
+   python -m ccppm.exporter --once --log /var/log/anthropic-dial-adapter/adapter.log
+   # Or set ANTHROPIC_DIAL_ADAPTER_LOG instead of --log; omit --once for the 30s loop.
    ```
    See `ccppm/exporter.py` for the full env var contract (`ADAPTER_LOG_DIR`, `ADAPTER_LOG_FILES`, `ADAPTER_METRICS_WINDOW_MINUTES`, healthcheck knobs, etc.).
 

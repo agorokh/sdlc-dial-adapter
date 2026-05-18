@@ -47,6 +47,14 @@ from .log_window import _family_from_model
 _SAFE_INFLUX_BUCKET = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
+def _env(*keys: str, default: str = "") -> str:
+    for key in keys:
+        val = os.environ.get(key)
+        if val is not None and str(val).strip() != "":
+            return val
+    return default
+
+
 def _validate_influx_bucket(name: str) -> str:
     if not name or _SAFE_INFLUX_BUCKET.fullmatch(name) is None:
         raise ValueError(
@@ -505,10 +513,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--healthcheck", action="store_true")
     args = p.parse_args(argv)
 
-    influx_url = os.environ.get("INFLUX_URL", "http://influxdb:8086")
-    org = os.environ.get("INFLUX_ORG", "dial-sandbox")
-    bucket = _validate_influx_bucket(os.environ.get("INFLUX_BUCKET", "dial-metrics"))
-    token = os.environ.get("INFLUX_TOKEN", "")
+    influx_url = _env("INFLUX_URL", "INFLUXDB_URL", default="http://influxdb:8086")
+    org = _env("INFLUX_ORG", "INFLUXDB_ORG", default="dial-sandbox")
+    bucket = _validate_influx_bucket(_env("INFLUX_BUCKET", "INFLUXDB_BUCKET", default="dial-metrics"))
+    token = _env("INFLUX_TOKEN", "INFLUXDB_TOKEN")
     if not token:
         sys.stderr.write("INFLUX_TOKEN is required\n")
         return 2

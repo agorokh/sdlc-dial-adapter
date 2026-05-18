@@ -28,6 +28,15 @@ from .influx_escape import (
 )
 
 
+def _env(*keys: str, default: str = "") -> str:
+    """First non-empty env var among ``keys`` (supports INFLUX_* and INFLUXDB_* aliases)."""
+    for key in keys:
+        val = os.environ.get(key)
+        if val is not None and str(val).strip() != "":
+            return val
+    return default
+
+
 def metrics_to_line_protocol(
     measurement: str,
     tags: dict[str, str],
@@ -234,8 +243,8 @@ def run_healthcheck(log_paths: list[Path]) -> int:
         "true",
         "yes",
     )
-    if require and os.environ.get("INFLUX_TOKEN"):
-        influx_url = os.environ.get("INFLUX_URL", "http://influxdb:8086")
+    if require and _env("INFLUX_TOKEN", "INFLUXDB_TOKEN"):
+        influx_url = _env("INFLUX_URL", "INFLUXDB_URL", default="http://influxdb:8086")
         if not _influx_ready(influx_url):
             return 1
         max_age = float(os.environ.get("ADAPTER_METRICS_HEALTH_MAX_WRITE_AGE_SEC", "120"))
@@ -257,11 +266,11 @@ def run_once() -> list[str]:
     paths = _log_paths_from_env()
     window_minutes = float(os.environ.get("ADAPTER_METRICS_WINDOW_MINUTES", "5"))
     window_seconds = window_minutes * 60.0
-    measurement = os.environ.get("INFLUX_MEASUREMENT", "adapter_metrics")
-    influx_url = os.environ.get("INFLUX_URL", "http://influxdb:8086")
-    org = os.environ.get("INFLUX_ORG", "dial-sandbox")
-    bucket = os.environ.get("INFLUX_BUCKET", "dial-metrics")
-    token = os.environ.get("INFLUX_TOKEN", "")
+    measurement = _env("INFLUX_MEASUREMENT", default="adapter_metrics")
+    influx_url = _env("INFLUX_URL", "INFLUXDB_URL", default="http://influxdb:8086")
+    org = _env("INFLUX_ORG", "INFLUXDB_ORG", default="dial-sandbox")
+    bucket = _env("INFLUX_BUCKET", "INFLUXDB_BUCKET", default="dial-metrics")
+    token = _env("INFLUX_TOKEN", "INFLUXDB_TOKEN")
     if not token:
         raise RuntimeError("INFLUX_TOKEN is required for Influx writes")
 
@@ -300,12 +309,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Compute one snapshot and write to Influx, then exit.",
     )
+    p.add_argument(
+        "--log",
+        metavar="PATH",
+        help="GFLog file to tail (sets ANTHROPIC_DIAL_ADAPTER_LOG for this run).",
+    )
     args = p.parse_args(argv)
+    if args.log:
+        os.environ["ANTHROPIC_DIAL_ADAPTER_LOG"] = args.log
     paths = _log_paths_from_env()
     if args.healthcheck:
         return run_healthcheck(paths)
 
-    if not os.environ.get("INFLUX_TOKEN", "").strip():
+    if not _env("INFLUX_TOKEN", "INFLUXDB_TOKEN").strip():
         print("[adapter-metrics-exporter] FATAL: INFLUX_TOKEN is required", file=sys.stderr)
         return 1
 
