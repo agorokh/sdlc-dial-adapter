@@ -1581,8 +1581,9 @@ def _estimate_request_input_tokens(openai_body: dict[str, Any]) -> int:
     Includes messages (``anthropic_to_openai`` moves top-level ``system`` into
     a leading system message), an explicit top-level ``system`` if present,
     tools (schemas can be huge — Claude Code sends ~32 of them), and
-    tool_choice. Conservative — a slight overestimate is preferable to
-    under-counting and tripping the real upstream limit.
+    tool_choice. Padded with ``_COUNT_TOKENS_PAD_FACTOR`` (same as
+    ``_count_tokens_for_anthropic_body``) so under-counting does not let the
+    clamp miss near-limit requests.
     """
     parts: list[str] = []
     for key in ("system", "messages", "tools", "tool_choice"):
@@ -1593,7 +1594,8 @@ def _estimate_request_input_tokens(openai_body: dict[str, Any]) -> int:
             parts.append(val)
         else:
             parts.append(json.dumps(val, separators=(",", ":"), default=str))
-    return max(0, sum(len(p) for p in parts) // 4)
+    raw = sum(len(p) for p in parts) // 4
+    return int(max(0, raw) * _COUNT_TOKENS_PAD_FACTOR)
 
 
 def _clamp_max_tokens_to_fit_context(
