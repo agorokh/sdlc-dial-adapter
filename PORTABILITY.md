@@ -78,10 +78,10 @@ translate request and response bodies in both directions:
 content blocks <-> OpenAI messages, SSE stream <-> Anthropic SSE.
 `cache_control` markers pass through on Anthropic upstreams; they are
 stripped for non-Anthropic upstreams (gateway-side gap, not a model
-property). Per-request log fields land at the path given by
-`ANTHROPIC_DIAL_ADAPTER_LOG` (default `/var/log/anthropic-dial-adapter/adapter.log`
-inside the container; falls back to stderr otherwise), one JSON line
-per `request_in` / `response_out` / `error` event.
+property). Per-event log fields land in bare JSON at
+`ANTHROPIC_DIAL_ADAPTER_LOG` (default
+`/var/log/anthropic-dial-adapter/adapter.log` inside the container;
+see Observability below for the stderr mirror).
 
 ## Observability (optional)
 
