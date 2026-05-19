@@ -82,7 +82,7 @@ single-user loopback deployment against EPAM DIAL.
 | `DIAL_API_VERSION` | `2024-02-01` | Appended as `?api-version=` query string on each upstream call. |
 | `BIND` | `127.0.0.1` | Listen address. Set to `0.0.0.0` inside Docker so the host port-forward reaches the listener. Do not bind to a routable interface without a reverse proxy in front. |
 | `LISTEN_PORT` | `8092` | TCP port. |
-| `ANTHROPIC_DIAL_ADAPTER_LOG` | `/var/log/anthropic-dial-adapter/adapter.log` | Path for the structured JSON log. Falls back to stderr if the directory is unwritable. |
+| `ANTHROPIC_DIAL_ADAPTER_LOG` | `/var/log/anthropic-dial-adapter/adapter.log` | Path for bare JSON log lines when writable; always mirrored to stderr with a prefixed format (see [PORTABILITY.md](PORTABILITY.md)). |
 | `ANTHROPIC_DIAL_PRICE_TABLE_JSON` | _(empty)_ | Optional operator price table. When set, each `response_out` event carries a `cost_usd_estimate` field. |
 | `ANTHROPIC_DIAL_ALIASES_JSON` | _(empty)_ | Optional model alias map. Rewrites the `model` field in requests to a different upstream deployment id. |
 | `ANTHROPIC_DIAL_SHADOW_MODEL` | _(empty)_ | Optional shadow-dispatch target. When set, every primary response triggers a second upstream call for comparison; the shadow response is written to a separate log and never returned to the client. Doubles upstream load and cost. |
@@ -114,7 +114,8 @@ working metrics-and-dashboards pipeline can stand one up in minutes.
 Adopters using their own observability stack should read
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md) —
 the vendor-neutral contract for JSON events written to
-`ANTHROPIC_DIAL_ADAPTER_LOG` (or stderr when that path is unwritable).
+`ANTHROPIC_DIAL_ADAPTER_LOG` (bare JSON when writable; see PORTABILITY
+for the prefixed stderr mirror).
 
 ## Code layout
 

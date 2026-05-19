@@ -92,10 +92,10 @@ lifecycle events are separate lines with their own `event` values.
 When the log file path is writable, those lines land as bare JSON in
 `ANTHROPIC_DIAL_ADAPTER_LOG` (the path shippers and
 [`ccppm/exporter.py`](ccppm/exporter.py) should tail). The adapter
-also mirrors every line to stderr with a
-`[anthropic-dial-adapter] ` prefix for `docker logs`; that stream is
-not bare NDJSON. If the file path is unwritable, only the prefixed
-stderr stream is available. See
+also mirrors every line to stderr with an
+`[anthropic-dial-adapter]` prefix and a separating space before the
+JSON for `docker logs`; that stream is not bare NDJSON. If the file
+path is unwritable, only the prefixed stderr stream is available. See
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md)
 for the vendor-neutral field contract.
 
