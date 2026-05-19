@@ -98,13 +98,16 @@ def test_clamp_noop_when_input_is_small() -> None:
 
 
 def test_clamp_fires_when_input_crowds_context() -> None:
-    """~95k-token-equivalent input vs 131k Qwen cap with max_tokens=32k →
-    budget = 131k - 95k - 4k = 32k, just barely under requested → clamp fires."""
+    """~380k content chars vs 131k Qwen cap with max_tokens=32k.
+
+    Raw chars/4 is ~95k, but JSON envelope plus the 1.10× pad in
+    ``_estimate_request_input_tokens`` pushes the estimate above that, so the
+    remaining budget (max_context − estimated_input − safety margin) lands
+    slightly below 32k and ``_clamp_max_tokens_to_fit_context`` trims
+    max_tokens."""
     body = {
         "model": "qwen.qwen3-coder-480b-a35b-v1:0",
         "max_tokens": 32000,
-        # 380k chars / 4 ≈ 95k token estimate. Plus JSON envelope, will trip
-        # the clamp but not exceed context.
         "messages": [{"role": "user", "content": "x" * (95_000 * 4)}],
     }
     cache_metric: dict = {}

@@ -68,10 +68,10 @@ def test_wrap_fires_for_qwen_with_string_content() -> None:
     body = _msg_with_tool_result("qwen.qwen3-coder-480b-a35b-v1:0", "plain text result")
     out, _ = app.anthropic_to_openai(body)
     tool_msg = _last_tool_message(out)
-    assert tool_msg["content"] == '{"output": "plain text result"}'
-    # And it's a bare string, not a structured list — DIAL requires this for the
-    # ``tool`` role.
     assert isinstance(tool_msg["content"], str)
+    parsed = json.loads(tool_msg["content"])
+    assert isinstance(parsed, dict)
+    assert parsed["output"] == "plain text result"
 
 
 def test_wrap_fires_for_moonshotai_with_json_shape_text() -> None:

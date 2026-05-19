@@ -66,15 +66,16 @@ def test_count_tokens_scales_roughly_linearly_with_input_size() -> None:
 
 
 def test_count_tokens_pad_factor_makes_us_over_report() -> None:
-    """The pad factor (1.10) must over-report, not under-report. Even when the
-    chars/4 raw value is X, the reported value should be >= X."""
+    """The pad factor (1.10) must over-report relative to chars/4 on the
+    serialized blob — not merely JSON envelope overhead."""
     raw_chars = 4000
     body = {"messages": [{"role": "user", "content": "x" * raw_chars}]}
     n = app._count_tokens_for_anthropic_body(body)
-    # Raw chars/4 = 1000 tokens before pad. Reported should be at least that.
-    raw_token_estimate = (raw_chars // 4)
-    # Plus messages-list JSON overhead (role/content keys, brackets, quotes)
-    assert n >= raw_token_estimate
+    blob = json.dumps(body["messages"], separators=(",", ":"), default=str)
+    raw_tokens = len(blob) // 4
+    expected_with_pad = int(raw_tokens * app._COUNT_TOKENS_PAD_FACTOR)
+    assert n == expected_with_pad
+    assert n > raw_tokens
 
 
 def test_count_tokens_includes_system_string() -> None:
