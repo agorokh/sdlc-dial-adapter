@@ -83,14 +83,28 @@ property). Per-request log fields land at the path given by
 inside the container; falls back to stderr otherwise), one JSON line
 per `request_in` / `response_out` / `error` event.
 
+## Observability (optional)
+
+The adapter emits one structured JSON line per request to its log
+file (or stderr if the path isn't writable). Any line-oriented log
+shipper works against that raw stream — see
+[`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md)
+for the vendor-neutral field contract.
+
+The repo also ships an optional reference stack under
+[`observability/`](observability/): two Grafana dashboards plus an
+InfluxDB exporter (`ccppm/exporter.py`) that tails the same log file
+and writes rolling metrics. None of this is required to run the
+adapter — pick the pipeline that fits your environment, or skip
+observability entirely.
+
 ## What this repo doesn't ship
 
-This repo is the minimal subset needed to run the adapter standalone.
-The observability sidecars (Influx, Vector, Grafana, the metrics
-exporter) and the larger evaluation tooling live in the parent
-research sandbox and are not part of this artefact. The adapter
-emits structured JSON logs on its own, so any line-oriented log
-shipper will work without those sidecars.
+The larger evaluation tooling (multi-model bake-off harnesses, the
+trial corpus, the research write-ups) lives in the parent research
+sandbox and is intentionally out of scope here. This repo is the
+minimal subset needed to run the adapter and reproduce its
+behavior.
 
 ## Common issues
 
