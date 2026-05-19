@@ -35,7 +35,8 @@ import pytest
 
 ADAPTER_DIR = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("anthropic_dial_adapter_app", ADAPTER_DIR / "app.py")
-assert spec is not None and spec.loader is not None
+assert spec is not None
+assert spec.loader is not None
 app = importlib.util.module_from_spec(spec)
 sys.modules["anthropic_dial_adapter_app"] = app
 spec.loader.exec_module(app)
@@ -190,5 +191,6 @@ def test_clamp_constants_are_sane() -> None:
     assert app._CONTEXT_SAFETY_MARGIN_TOKENS > 0
     # Safety margin should be smaller than every mapped context window.
     for prefix, ctx in app._MODEL_MAX_CONTEXT.items():
-        assert app._CONTEXT_SAFETY_MARGIN_TOKENS < ctx, \
+        assert ctx > app._CONTEXT_SAFETY_MARGIN_TOKENS, (
             f"safety margin too large for {prefix} ({ctx} tokens)"
+        )

@@ -27,12 +27,13 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-from aiohttp import web
+from collections.abc import Coroutine
+from typing import Any
 
 ADAPTER_DIR = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("anthropic_dial_adapter_app", ADAPTER_DIR / "app.py")
-assert spec is not None and spec.loader is not None
+assert spec is not None
+assert spec.loader is not None
 app = importlib.util.module_from_spec(spec)
 sys.modules["anthropic_dial_adapter_app"] = app
 spec.loader.exec_module(app)
@@ -50,7 +51,8 @@ def test_count_tokens_small_prompt_is_small_integer() -> None:
     }
     n = app._count_tokens_for_anthropic_body(body)
     assert isinstance(n, int)
-    assert 1 <= n < 100
+    assert n >= 1
+    assert n < 100
 
 
 def test_count_tokens_scales_roughly_linearly_with_input_size() -> None:
@@ -135,18 +137,22 @@ def test_pad_factor_is_above_one() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _MissingRequestBody(ValueError):
+    """Raised when the stub request has no body bytes."""
+
+
 class _StubRequest:
     """Minimal aiohttp-Request-like stub for handler testing."""
-    def __init__(self, body: bytes | None):
+    def __init__(self, body: bytes | None) -> None:
         self._body = body
 
-    async def json(self):
+    async def json(self) -> object:
         if self._body is None:
-            raise ValueError("no body")
+            raise _MissingRequestBody
         return json.loads(self._body)
 
 
-def _run(coro):
+def _run(coro: Coroutine[Any, Any, Any]) -> object:
     return asyncio.run(coro)
 
 

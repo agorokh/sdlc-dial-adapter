@@ -25,11 +25,10 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
 ADAPTER_DIR = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("anthropic_dial_adapter_app", ADAPTER_DIR / "app.py")
-assert spec is not None and spec.loader is not None
+assert spec is not None
+assert spec.loader is not None
 app = importlib.util.module_from_spec(spec)
 sys.modules["anthropic_dial_adapter_app"] = app
 spec.loader.exec_module(app)
@@ -229,7 +228,8 @@ def test_response_reverses_alias_to_original_tool_name() -> None:
     )
     tool_use = next(c for c in anth["content"] if c["type"] == "tool_use")
     assert tool_use["name"] == LONG_NAME
-    assert LONG_NAME in by_name and by_name[LONG_NAME] == 1
+    assert LONG_NAME in by_name
+    assert by_name[LONG_NAME] == 1
     # Alias name MUST NOT leak into per-name counter.
     assert alias not in by_name
 
@@ -247,7 +247,7 @@ def test_response_passthrough_when_no_aliases() -> None:
 def test_response_unmatched_upstream_name_is_kept_as_is() -> None:
     """Upstream returns a name that's not in the alias map (e.g. native short name) — keep verbatim."""
     upstream = _upstream_with_tool_call("native_tool")
-    anth, by_name = app.openai_to_anthropic_response(
+    anth, _by_name = app.openai_to_anthropic_response(
         upstream,
         "qwen.qwen3-coder-480b-a35b-v1:0",
         tool_name_aliases={"some_alias": "some_long_original"},

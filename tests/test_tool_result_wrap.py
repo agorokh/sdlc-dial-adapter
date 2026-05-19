@@ -23,18 +23,18 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-
-import pytest
+from typing import Any
 
 ADAPTER_DIR = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("anthropic_dial_adapter_app", ADAPTER_DIR / "app.py")
-assert spec is not None and spec.loader is not None
+assert spec is not None
+assert spec.loader is not None
 app = importlib.util.module_from_spec(spec)
 sys.modules["anthropic_dial_adapter_app"] = app
 spec.loader.exec_module(app)
 
 
-def _msg_with_tool_result(model: str, tool_result_content):
+def _msg_with_tool_result(model: str, tool_result_content: object) -> dict[str, Any]:
     """Build a 3-message body that triggers the tool_result translation path."""
     return {
         "model": model,
@@ -51,12 +51,16 @@ def _msg_with_tool_result(model: str, tool_result_content):
     }
 
 
-def _last_tool_message(openai_body):
+class _NoToolMessageError(AssertionError):
+    """Raised when the translated body has no ``tool`` role message."""
+
+
+def _last_tool_message(openai_body: dict[str, Any]) -> dict[str, Any]:
     """Return the most recent OpenAI ``tool`` role message in the translated body."""
     for m in reversed(openai_body["messages"]):
         if m.get("role") == "tool":
             return m
-    raise AssertionError("no tool message in translated body")
+    raise _NoToolMessageError
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +104,8 @@ def test_wrap_fires_for_minimax_with_list_content() -> None:
     parsed = json.loads(tool_msg["content"])
     assert isinstance(parsed, dict)
     # List of text parts is flattened with newlines before wrapping
-    assert "a" in parsed["output"] and "b" in parsed["output"]
+    assert "a" in parsed["output"]
+    assert "b" in parsed["output"]
 
 
 def test_wrap_handles_empty_content_for_non_anthropic_upstream() -> None:
@@ -150,5 +155,5 @@ def test_qwen_tool_result_is_never_structured_list() -> None:
     )
     out, _ = app.anthropic_to_openai(body)
     tool_msg = _last_tool_message(out)
-    assert isinstance(tool_msg["content"], str), \
-        "DIAL chat-completions requires bare-string content on the tool role"
+    # DIAL chat-completions requires bare-string content on the tool role.
+    assert isinstance(tool_msg["content"], str)

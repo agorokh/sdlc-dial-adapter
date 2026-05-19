@@ -128,7 +128,7 @@ python -m pytest tests/ -v
 ```
 
 CI runs `pytest` plus an `ast.parse` sweep on every Python file across
-Python 3.11 and 3.12. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+Python 3.11 and 3.12. See the [CI workflow](.github/workflows/ci.yml).
 
 ## License
 
