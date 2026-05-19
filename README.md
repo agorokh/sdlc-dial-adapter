@@ -116,6 +116,20 @@ Adopters using their own observability stack should read
 the vendor-neutral contract for JSON events written to
 `ANTHROPIC_DIAL_ADAPTER_LOG` (or stderr when that path is unwritable).
 
+## Development
+
+```bash
+# Set up
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt pytest
+
+# Run the test suite
+python -m pytest tests/ -v
+```
+
+CI runs `pytest` plus an `ast.parse` sweep on every Python file across
+Python 3.11 and 3.12. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
 ## License
 
 Apache 2.0, matching EPAM AI DIAL itself. See [LICENSE](LICENSE).
