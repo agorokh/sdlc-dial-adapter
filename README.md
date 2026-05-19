@@ -82,7 +82,7 @@ single-user loopback deployment against EPAM DIAL.
 | `DIAL_API_VERSION` | `2024-02-01` | Appended as `?api-version=` query string on each upstream call. |
 | `BIND` | `127.0.0.1` | Listen address. Set to `0.0.0.0` inside Docker so the host port-forward reaches the listener. Do not bind to a routable interface without a reverse proxy in front. |
 | `LISTEN_PORT` | `8092` | TCP port. |
-| `ANTHROPIC_DIAL_ADAPTER_LOG` | `/var/log/anthropic-dial-adapter/adapter.log` | Path for the structured JSON log. Falls back to stderr if the directory is unwritable. |
+| `ANTHROPIC_DIAL_ADAPTER_LOG` | `/var/log/anthropic-dial-adapter/adapter.log` | Path for bare JSON log lines when writable; always mirrored to stderr with a prefixed format (see [PORTABILITY.md](PORTABILITY.md)). |
 | `ANTHROPIC_DIAL_PRICE_TABLE_JSON` | _(empty)_ | Optional operator price table. When set, each `response_out` event carries a `cost_usd_estimate` field. |
 | `ANTHROPIC_DIAL_ALIASES_JSON` | _(empty)_ | Optional model alias map. Rewrites the `model` field in requests to a different upstream deployment id. |
 | `ANTHROPIC_DIAL_SHADOW_MODEL` | _(empty)_ | Optional shadow-dispatch target. When set, every primary response triggers a second upstream call for comparison; the shadow response is written to a separate log and never returned to the client. Doubles upstream load and cost. |
@@ -107,14 +107,37 @@ Proof of concept extracted from a larger internal evaluation
 (192 trials of Claude Code 2.1 across eight upstream models routed
 through DIAL). The translation core is stable.
 
-The repo also ships an optional observability bundle under
-[`observability/`](observability/) — Grafana dashboards plus a
-reference InfluxDB exporter — so adopters who want a working
-metrics-and-dashboards pipeline can stand one up in minutes.
+The repo also ships optional reference observability artifacts:
+Grafana dashboards under [`observability/`](observability/) and an
+InfluxDB exporter under [`ccppm/`](ccppm/) — so adopters who want a
+working metrics-and-dashboards pipeline can stand one up in minutes.
 Adopters using their own observability stack should read
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md) —
 the vendor-neutral contract for JSON events written to
-`ANTHROPIC_DIAL_ADAPTER_LOG` (or stderr when that path is unwritable).
+`ANTHROPIC_DIAL_ADAPTER_LOG` (bare JSON when writable; see PORTABILITY
+for the prefixed stderr mirror).
+
+## Code layout
+
+`app.py` is a single Python module organized by clearly-labeled
+section dividers. The most-touched code paths:
+
+| Section | Lines | What lives here |
+|---|---:|---|
+| Anthropic → OpenAI request translation | ~250–800 | `anthropic_to_openai()` (~495). Calls Bedrock-quirk helpers defined later: `_strip_unsupported_features_for_upstream` (~1392), `_alias_long_tool_names` (~1440), `_clamp_max_tokens_to_fit_context` (~1603), plus in-function `tool_result` wrap. |
+| OpenAI → Anthropic response translation | ~810–890 | `openai_to_anthropic_response()`. Reverse-maps aliased tool names back so the client never sees them. |
+| OpenAI SSE → Anthropic SSE | ~890–1180 | `stream_openai_to_anthropic()`. Streaming bridge. |
+| HTTP plumbing | ~1180–2410 | `/health`, `/v1/models`, `/v1/messages`, `/v1/messages/count_tokens`. The `count_tokens` handler at line ~1239 implements the heuristic that tells Claude Code when to auto-compact. |
+| Shadow-mode helpers | ~2410–2570 | Optional parallel-dispatch mode for comparison testing. |
+| OpenAI-shape sibling routes | ~2570–end | `/v1/chat/completions` passthrough for editors that override the OpenAI base URL (Cursor, Zed, etc.). |
+
+`anthropic_to_openai()` and `openai_to_anthropic_response()` are
+covered under `tests/` (including alias, clamp, and tool_result wrap
+behavior exercised through `anthropic_to_openai`). The workaround
+helpers mutate bodies in place; the streaming bridge
+(`stream_openai_to_anthropic`) is not in that unit suite.
+See [`docs/findings/`](docs/findings) for the engineering write-ups
+that explain each Bedrock workaround's failure mode and fix.
 
 ## Development
 

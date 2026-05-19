@@ -78,19 +78,41 @@ translate request and response bodies in both directions:
 content blocks <-> OpenAI messages, SSE stream <-> Anthropic SSE.
 `cache_control` markers pass through on Anthropic upstreams; they are
 stripped for non-Anthropic upstreams (gateway-side gap, not a model
-property). Per-request log fields land at the path given by
-`ANTHROPIC_DIAL_ADAPTER_LOG` (default `/var/log/anthropic-dial-adapter/adapter.log`
-inside the container; falls back to stderr otherwise), one JSON line
-per `request_in` / `response_out` / `error` event.
+property). Per-event log fields land in bare JSON at
+`ANTHROPIC_DIAL_ADAPTER_LOG` (default
+`/var/log/anthropic-dial-adapter/adapter.log` inside the container;
+see Observability below for the stderr mirror).
+
+## Observability (optional)
+
+The adapter emits one structured JSON line per event. A normal
+request emits at least `request_in` and `response_out`; errors and
+lifecycle events are separate lines with their own `event` values.
+
+When the log file path is writable, those lines land as bare JSON in
+`ANTHROPIC_DIAL_ADAPTER_LOG` (the path shippers and
+[`ccppm/exporter.py`](ccppm/exporter.py) should tail). The adapter
+also mirrors every line to stderr with an
+`[anthropic-dial-adapter]` prefix and a separating space before the
+JSON for `docker logs`; that stream is not bare NDJSON. If the file
+path is unwritable, only the prefixed stderr stream is available. See
+[`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md)
+for the vendor-neutral field contract.
+
+The repo also ships optional reference observability artifacts:
+Grafana dashboards under [`observability/`](observability/) and an
+InfluxDB exporter under [`ccppm/`](ccppm/) (`ccppm/exporter.py`)
+that tails the same log file and writes rolling metrics. None of
+this is required to run the adapter — pick the pipeline that fits
+your environment, or skip observability entirely.
 
 ## What this repo doesn't ship
 
-This repo is the minimal subset needed to run the adapter standalone.
-The observability sidecars (Influx, Vector, Grafana, the metrics
-exporter) and the larger evaluation tooling live in the parent
-research sandbox and are not part of this artefact. The adapter
-emits structured JSON logs on its own, so any line-oriented log
-shipper will work without those sidecars.
+The larger evaluation tooling (multi-model bake-off harnesses, the
+trial corpus, the research write-ups) lives in the parent research
+sandbox and is intentionally out of scope here. This repo is the
+minimal subset needed to run the adapter and reproduce its
+behavior.
 
 ## Common issues
 
