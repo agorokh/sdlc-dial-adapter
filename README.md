@@ -123,16 +123,17 @@ section dividers. The most-touched code paths:
 
 | Section | Lines | What lives here |
 |---|---:|---|
-| Anthropic → OpenAI request translation | ~250–800 | `anthropic_to_openai()`. Where Bedrock-quirk workarounds apply on the request side (stop_sequences strip via `_strip_unsupported_features_for_upstream`, 64-char tool name aliasing via `_alias_long_tool_names`, `max_tokens` clamp via `_clamp_max_tokens_to_fit_context`, `{"output": ...}` tool_result wrap). |
+| Anthropic → OpenAI request translation | ~250–800 | `anthropic_to_openai()` (~495). Calls Bedrock-quirk helpers defined later: `_strip_unsupported_features_for_upstream` (~1392), `_alias_long_tool_names` (~1440), `_clamp_max_tokens_to_fit_context` (~1603), plus in-function `tool_result` wrap. |
 | OpenAI → Anthropic response translation | ~810–890 | `openai_to_anthropic_response()`. Reverse-maps aliased tool names back so the client never sees them. |
 | OpenAI SSE → Anthropic SSE | ~890–1180 | `stream_openai_to_anthropic()`. Streaming bridge. |
 | HTTP plumbing | ~1180–2410 | `/health`, `/v1/models`, `/v1/messages`, `/v1/messages/count_tokens`. The `count_tokens` handler at line ~1239 implements the heuristic that tells Claude Code when to auto-compact. |
 | Shadow-mode helpers | ~2410–2570 | Optional parallel-dispatch mode for comparison testing. |
 | OpenAI-shape sibling routes | ~2570–end | `/v1/chat/completions` passthrough for editors that override the OpenAI base URL (Cursor, Zed, etc.). |
 
-The request/response translators (`anthropic_to_openai`,
-`openai_to_anthropic_response`) and Bedrock workaround helpers are
-pure and covered under `tests/`. The streaming bridge
+`anthropic_to_openai()` and `openai_to_anthropic_response()` are
+covered under `tests/` (including alias, clamp, and tool_result wrap
+behavior exercised through `anthropic_to_openai`). The workaround
+helpers mutate bodies in place; the streaming bridge
 (`stream_openai_to_anthropic`) is not in that unit suite.
 See [`docs/findings/`](docs/findings) for the engineering write-ups
 that explain each Bedrock workaround's failure mode and fix.
