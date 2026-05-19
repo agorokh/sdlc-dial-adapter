@@ -85,18 +85,20 @@ per `request_in` / `response_out` / `error` event.
 
 ## Observability (optional)
 
-The adapter emits one structured JSON line per request to its log
-file (or stderr if the path isn't writable). Any line-oriented log
-shipper works against that raw stream — see
+The adapter emits one structured JSON line per event to its log
+file (or stderr if the path isn't writable). A normal request emits
+at least `request_in` and `response_out`; errors and lifecycle
+events are separate lines with their own `event` values. Any
+line-oriented log shipper works against that raw stream — see
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md)
 for the vendor-neutral field contract.
 
-The repo also ships an optional reference stack under
-[`observability/`](observability/): two Grafana dashboards plus an
-InfluxDB exporter (`ccppm/exporter.py`) that tails the same log file
-and writes rolling metrics. None of this is required to run the
-adapter — pick the pipeline that fits your environment, or skip
-observability entirely.
+The repo also ships optional reference observability artifacts:
+Grafana dashboards under [`observability/`](observability/) and an
+InfluxDB exporter under [`ccppm/`](ccppm/) (`ccppm/exporter.py`)
+that tails the same log file and writes rolling metrics. None of
+this is required to run the adapter — pick the pipeline that fits
+your environment, or skip observability entirely.
 
 ## What this repo doesn't ship
 

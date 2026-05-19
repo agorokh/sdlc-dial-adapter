@@ -107,10 +107,10 @@ Proof of concept extracted from a larger internal evaluation
 (192 trials of Claude Code 2.1 across eight upstream models routed
 through DIAL). The translation core is stable.
 
-The repo also ships an optional observability bundle under
-[`observability/`](observability/) — Grafana dashboards plus a
-reference InfluxDB exporter — so adopters who want a working
-metrics-and-dashboards pipeline can stand one up in minutes.
+The repo also ships optional reference observability artifacts:
+Grafana dashboards under [`observability/`](observability/) and an
+InfluxDB exporter under [`ccppm/`](ccppm/) — so adopters who want a
+working metrics-and-dashboards pipeline can stand one up in minutes.
 Adopters using their own observability stack should read
 [`observability/EVENT_SCHEMA.md`](observability/EVENT_SCHEMA.md) —
 the vendor-neutral contract for JSON events written to
@@ -130,7 +130,10 @@ section dividers. The most-touched code paths:
 | Shadow-mode helpers | ~2410–2570 | Optional parallel-dispatch mode for comparison testing. |
 | OpenAI-shape sibling routes | ~2570–end | `/v1/chat/completions` passthrough for editors that override the OpenAI base URL (Cursor, Zed, etc.). |
 
-All translation functions are pure and unit-tested under `tests/`.
+The request/response translators (`anthropic_to_openai`,
+`openai_to_anthropic_response`) and Bedrock workaround helpers are
+pure and covered under `tests/`. The streaming bridge
+(`stream_openai_to_anthropic`) is not in that unit suite.
 See [`docs/findings/`](docs/findings) for the engineering write-ups
 that explain each Bedrock workaround's failure mode and fix.
 
