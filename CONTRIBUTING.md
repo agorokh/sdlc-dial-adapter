@@ -31,7 +31,7 @@ Thanks for taking an interest. This is a small, scoped adapter — the contribut
 
 - Python 3.11+, type hints everywhere, prefer typed models over loose dicts at API boundaries.
 - Async / `aiohttp` is the only HTTP client; no `requests`.
-- Tests under `tests/` use `pytest-asyncio`; mirror the source layout.
+- Tests under `tests/` use `pytest`; async cases use stdlib `asyncio.run` (same as CI).
 - No global mutable state; pass config explicitly.
 - Log via the standard `logging` module; structured JSON via the existing GFLog helper in `app.py`.
 
