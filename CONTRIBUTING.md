@@ -8,7 +8,7 @@ Thanks for taking an interest. This is a small, scoped adapter — the contribut
 - **Compatibility fixes** for additional OpenAI-shape gateways beyond AI DIAL (vLLM, LiteLLM, Together, Fireworks, etc.). Add a new gateway to `PORTABILITY.md` rather than branching the core translation logic.
 - **Edge-case translation improvements** for the Anthropic ↔ OpenAI shape mapping, with tests under `tests/`.
 - **Observability improvements** under `observability/` (Grafana dashboards, Prometheus rules, structured log enhancements).
-- **Documentation clarifications** to README / PORTABILITY / inline docstrings.
+- **Documentation clarifications** to README / PORTABILITY.md / inline docstrings.
 
 ## What contributions need a discussion first (open an issue)
 
@@ -20,16 +20,12 @@ Thanks for taking an interest. This is a small, scoped adapter — the contribut
 
 1. Open an issue describing the change before non-trivial work, so we can agree on scope.
 2. Fork + branch off `main`. Branch naming: `fix/<slug>`, `feat/<slug>`, `chore/<slug>`, `docs/<slug>`.
-3. Run the test suite locally:
+3. Run the test suite locally (same deps as [CI](.github/workflows/ci.yml)):
    ```bash
-   pip install -e ".[dev]"
-   pytest
+   pip install -r requirements.txt pytest
+   python -m pytest tests/ -v
    ```
-4. Run the linter:
-   ```bash
-   ruff check .
-   ```
-5. Open the PR with a clear description. PR bot reviews run automatically; address actionable feedback.
+4. Open the PR with a clear description. PR bot reviews run automatically; address actionable feedback.
 
 ## Coding conventions
 
