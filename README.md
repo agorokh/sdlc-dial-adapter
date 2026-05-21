@@ -1,5 +1,9 @@
 # sdlc-dial-adapter
 
+[![CI](https://github.com/agorokh/sdlc-dial-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/agorokh/sdlc-dial-adapter/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 A small translation adapter that lets [Anthropic Claude Code](https://github.com/anthropics/claude-code)
 and other Anthropic Messages API clients run against
 [EPAM AI DIAL](https://github.com/epam/ai-dial) or any other gateway that
