@@ -1,0 +1,20 @@
+chore(post-merge): unify /post-merge across Claude/Cursor/Codex/Antigravity
+
+One canonical `/post-merge` behaviour across every agent surface. All
+four mirrors delegate to the same source-of-truth:
+`.claude/agents/post-merge-steward.md` (149 lines, identical to
+agent-factory canonical).
+
+Surfaces:
+  .claude/agents/post-merge-steward.md   (canonical source of truth)
+  .claude/skills/post-merge/SKILL.md     (Claude Code, thin wrapper)
+  .cursor/skills/post-merge/SKILL.md     (Cursor, thin wrapper)
+  .codex/skills/post-merge/SKILL.md      (Codex, thin wrapper, new format)
+  .agents/skills/post-merge/SKILL.md     (Antigravity, only if .agents/ pre-exists)
+
+The old Codex format `.codex/agents/post-merge-steward.toml` is replaced
+by the new `.codex/skills/post-merge/SKILL.md` matching the convention
+established by `.codex/skills/account-intake-overview/` in agent-factory.
+
+Closes the post-#246 follow-up: `/post-merge` now does the same thing
+in every repo on every machine in every agent.

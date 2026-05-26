@@ -1,0 +1,25 @@
+chore(skills): propagate workflow-skill collapse from agent-factory#256
+
+The 5 workflow agents (post-merge-steward, issue-driven-coding-orchestrator,
+pr-resolution-follow-up, dependency-review, learner) collapsed to skills in
+agent-factory as part of the 2026-05-26 ecosystem simplification. Apply the
+same collapse here so /post-merge, /orchestrate, /resolve-pr,
+/dependency-review, /learner do the identical thing in every repo on
+every machine in every agent (Claude Code, Cursor, Codex, Antigravity).
+
+What changed in this repo:
+  DELETED .claude/agents/{post-merge-steward,issue-driven-coding-orchestrator,
+    pr-resolution-follow-up,dependency-review,learner}.md (5 files).
+  REWROTE .claude/skills/<slash>/SKILL.md with the canonical body from
+    agent-factory's main. Mirrors written to .cursor/skills/, .codex/skills/,
+    and .agents/skills/ (where pre-existing).
+  REWROTE controlling-doc references (CLAUDE.md / AGENTS.md /
+    .claude/rules/orchestration.md if present) from agent-path /
+    backticked-agent-type form to skill-path / slash-name form.
+  RE-RENDERED memory-contract block via scripts/merge_memory_contract.py
+    (if present).
+
+Hard break — no stub redirects. Anything referencing these by their
+old agent name via Task(subagent_type=...) needs to be updated.
+
+Source PR: agorokh/agent-factory#256.
