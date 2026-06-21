@@ -7,8 +7,8 @@ Claude Code CLI) and forwards them to an OpenAI-compatible gateway at:
     POST {UPSTREAM_BASE}/openai/deployments/{model}/chat/completions
          ?api-version={DIAL_API_VERSION}
 
-The default target is EPAM AI DIAL (https://ai-proxy.lab.epam.com), but
-any OpenAI chat-completions endpoint will work given a compatible
+The upstream target is the EPAM AI DIAL gateway by default, but any
+OpenAI chat-completions endpoint will work given a compatible
 UPSTREAM_BASE and PROJECT_KEY.
 
 Authentication: clients send any of {x-api-key, Authorization: Bearer ...};
@@ -47,7 +47,7 @@ from aiohttp import web
 from ccppm.dial_pricing import estimate_cost_usd, load_price_table_env
 from ccppm.log_window import _family_from_model
 
-UPSTREAM = os.environ.get("UPSTREAM_BASE", "https://ai-proxy.lab.epam.com").rstrip("/")
+UPSTREAM = os.environ.get("UPSTREAM_BASE", "https://dial.example.com").rstrip("/")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8092"))
 DIAL_API_VERSION = os.environ.get("DIAL_API_VERSION", "2024-02-01")
 PROJECT_KEY = os.environ.get("PROJECT_KEY", "")
@@ -267,7 +267,7 @@ STOP_REASON_MAP = {
 # Anthropic Claude Code sends `cache_control: {"type":"ephemeral"}` markers on
 # system blocks, the trailing user turn, and tool definitions. The Bedrock-
 # Anthropic upstream supports caching via its native `cachePoint` shape, but
-# DIAL's `ai-proxy.lab.epam.com` aiproxy adapter has a
+# DIAL's aiproxy adapter has a
 # strict request validator that REJECTS every known cache_control shape with
 # HTTP 400 "Extra inputs are not permitted" — inline content-block field,
 # `custom_fields.cache_breakpoint`, and top-level message field all fail.
@@ -1282,7 +1282,7 @@ async def count_tokens(request: web.Request) -> web.Response:
 
 # Models list — Claude Desktop's Dev-Mode "Gateway" connection test calls
 # GET /v1/models on profile-apply and rejects the gateway if it 404s.
-# We fetch ai-proxy's /openai/models, filter to anthropic.* deployments,
+# We fetch the upstream's /openai/models, filter to anthropic.* deployments,
 # and reshape into Anthropic Messages /v1/models response.
 #
 # Cached in-process for MODELS_TTL_SEC so the test isn't a stampede on the
