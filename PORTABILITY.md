@@ -14,9 +14,8 @@ service.
 
 ## What you need
 
-- A DIAL API key with access to your project (default upstream is
-  `ai-proxy.lab.epam.com`; any OpenAI-compatible chat-completions
-  endpoint works if you set `UPSTREAM_BASE`)
+- A DIAL API key with access to your project (set `UPSTREAM_BASE` to your
+  DIAL endpoint; any OpenAI-compatible chat-completions endpoint works)
 - Either Docker (recommended) or Python 3.12+
 - Claude Code 2.1+ on your `$PATH` as `claude`
 
@@ -27,7 +26,7 @@ service.
 docker build -t sdlc-dial-adapter:local .
 docker run --rm -d --name sdlc-dial-adapter \
   -e PROJECT_KEY="$YOUR_DIAL_API_KEY" \
-  -e UPSTREAM_BASE="https://ai-proxy.lab.epam.com" \
+  -e UPSTREAM_BASE="https://dial.example.com" \
   -e BIND=0.0.0.0 \
   -p 127.0.0.1:8092:8092 \
   sdlc-dial-adapter:local

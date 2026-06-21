@@ -38,7 +38,7 @@ processes.
 docker build -t sdlc-dial-adapter:local .
 docker run --rm -d --name sdlc-dial-adapter \
   -e PROJECT_KEY="$YOUR_DIAL_API_KEY" \
-  -e UPSTREAM_BASE="https://ai-proxy.lab.epam.com" \
+  -e UPSTREAM_BASE="https://dial.example.com" \
   -e BIND=0.0.0.0 \
   -p 127.0.0.1:8092:8092 \
   sdlc-dial-adapter:local
@@ -76,13 +76,13 @@ chat-completions endpoint you have credentials for.
 
 ## Configuration reference
 
-All configuration is via environment variables. Defaults work for a
-single-user loopback deployment against EPAM DIAL.
+All configuration is via environment variables. Set `UPSTREAM_BASE` to your
+DIAL endpoint for a single-user loopback deployment against EPAM DIAL.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PROJECT_KEY` | _(unset; required)_ | Upstream API key. Sent as `Api-Key:` on every forwarded request. |
-| `UPSTREAM_BASE` | `https://ai-proxy.lab.epam.com` | Base URL of the OpenAI-compatible gateway. |
+| `UPSTREAM_BASE` | `https://dial.example.com` _(set to your DIAL endpoint)_ | Base URL of the OpenAI-compatible gateway. |
 | `DIAL_API_VERSION` | `2024-02-01` | Appended as `?api-version=` query string on each upstream call. |
 | `BIND` | `127.0.0.1` | Listen address. Set to `0.0.0.0` inside Docker so the host port-forward reaches the listener. Do not bind to a routable interface without a reverse proxy in front. |
 | `LISTEN_PORT` | `8092` | TCP port. |
