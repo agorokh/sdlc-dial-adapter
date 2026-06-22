@@ -58,3 +58,9 @@ docker-build/
 # Agent PR audit scratch (local ledgers / API dumps)
 .pr-audit-tmp/
 .venv-test/
+
+# Agent PR scratch (local commit/PR drafts)
+.scratch/
+
+# Cursor hook runtime state
+.cursor/hooks/state/
